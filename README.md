@@ -244,16 +244,15 @@ dsh-claude-glass/
 │  └─ toggle-repro/          §5.1 侧栏包含块缺陷的真 Electron 台架（真核心 CSS）
 │     ├─ main.js             `electron main.js <bundleA> <bundleB>`，输出 JSON 对照
 │     ├─ core-layout-css.txt 从 dsh-client-ui-layout 抽出的核心 CSS
-│     └─ core-sidebar-css.txt从 dsh-client-ui-sidebar 抽出的核心 CSS
+│     └─ core-sidebar-css.txt 从 dsh-client-ui-sidebar 抽出的核心 CSS
 ├─ licenses/
-│  ├─ dsh-client-ui-aqua.txt AGPL-3.0 全文
 │  └─ dsh-claude-theme.txt   MIT + SIL OFL 1.1 全文 + 四款字体署名
 ├─ shots/                    README 用的截图
 ├─ assets/
 │  └─ claude-tokens.json     从 skin.css 解析出的令牌表（生成物，已 gitignore）
 ├─ CHANGELOG.md              依赖清单、上游既有修复、本插件的每一次改动
-├─ NOTICE                    第三方声明（随包分发）
-├─ LICENSE                   = AGPL-3.0（构建时从 aqua 基线拷入）
+├─ NOTICE                    四段式第三方声明
+├─ LICENSE                   AGPL-3.0-only 全文（= aqua 基线的许可原文）
 ├─ dist/                     构建产物（已 gitignore）
 └─ package.json              仅用于装脚本，非发布包
 ```
@@ -265,8 +264,8 @@ dsh-claude-glass/
 
 | 部分 | 许可 | 全文 |
 | --- | --- | --- |
-| **本整合（整体）** | **AGPL-3.0-only** | `LICENSE`（= aqua 基线的 AGPL 全文） |
-| 玻璃材质、动效引擎、设置界面、运行期代码 | AGPL-3.0-only，来自 `dsh-client-ui-aqua` 1.3.1-patch.4 | `licenses/dsh-client-ui-aqua.txt` |
+| **本整合（整体）** | **AGPL-3.0-only** | `LICENSE` |
+| 玻璃材质、动效引擎、设置界面、运行期代码 | AGPL-3.0-only，来自 `dsh-client-ui-aqua` 1.3.1-patch.4 | `LICENSE`（同一份 AGPL 全文） |
 | 调色板、排版阶梯、版式语言 | MIT，Copyright (c) 2026 dsh-claude-theme contributors | `licenses/dsh-claude-theme.txt` |
 | Newsreader / Inter / JetBrains Mono 四份 woff2 | SIL OFL 1.1 | 同上（含字体署名与完整 OFL 正文） |
 | 运行期 peer 依赖（React、cordis、`@deepseek-ai/*`） | 各自上游许可，不随包分发 | `package.json` 的 `peerDependencies` |
@@ -277,21 +276,27 @@ AGPL-3.0-only 作品的衍生物。所有修改都是可复现的：清单见 `C
 程序化说明见生成包 `package.json` 里的 `dshCompatPatch`。
 
 分发出去的包同时带上 `NOTICE`（四段式第三方声明）与整个 `licenses/` 目录。
+`LICENSE` 与 `NOTICE` 在**仓库根**也各有一份：`LICENSE` 放在仓库根，GitHub 才能
+在仓库页上识别出 AGPL-3.0；`build.mjs` 是把它和 `NOTICE` 从仓库根拷进 `dist/`，
+而不是现写文本。
 
 非官方整合构建，与 DeepSeek、Anthropic 均无隶属关系；「Claude」仅指
 `dsh-claude-theme` 所复刻的那套视觉语言。
 
 ## 8. 发布
 
-仓库已 `git init`（分支 `main`）并完成首个提交，工作区干净，可以直接接远端：
-
-```powershell
-git remote add origin <你的仓库地址>
-git push -u origin main
-```
+已发布：<https://github.com/barryjohnson61/dsh-claude-glass>（public，分支 `main`）。
 
 `dist/`、`*.tgz`、`assets/claude-tokens.json` 已在 `.gitignore` 里，
 所以推上去的只有源码、文档、许可全文与截图。
 
-首次提交前请确认 `licenses/` 两份全文都在（`git status` 应为干净），
-因为它们承担了 AGPL 与 OFL 的随附义务。
+后续更新：
+
+```powershell
+git add -A
+git commit -m "<说明>"
+git push
+```
+
+改完记得跑一次 `git status` 确认工作区干净；`LICENSE`（AGPL 全文）与
+`licenses/dsh-claude-theme.txt`（MIT + OFL）承担随附义务，两者都必须留在仓库里。

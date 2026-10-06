@@ -151,8 +151,12 @@ react                                  ^18.2.0
   （npm 自动带 `LICENSE` 与 `README.md`，但**不会**带 `NOTICE`）。
 - 产物：`dist/dsh-claude-glass/dsh-claude-glass-1.0.0.tgz`，441490 字节。
 - `lib/client.js`：231570 → 693485 字节（+461915）。
-- 随包分发 `NOTICE`（四段式第三方声明）与 `licenses/`（AGPL-3.0 全文 +
-  MIT/OFL 全文）。
+- 随包分发 `NOTICE`（四段式第三方声明）、`LICENSE`（AGPL-3.0-only 全文）与
+  `licenses/dsh-claude-theme.txt`（MIT + SIL OFL 1.1 全文 + 四款字体署名）。
+- `LICENSE` 与 `NOTICE` 的**权威副本在仓库根**，`build.mjs` 只是把它们拷进 `dist/`
+  ——语料只在仓库里维护一份，不再由构建脚本内联生成。
+  `LICENSE` 放仓库根还有一个作用：GitHub 靠它识别仓库许可（原先只有
+  `licenses/*.txt`，仓库页显示为「无许可」）。
 
 ### 已知问题（**不在本插件内**）
 
