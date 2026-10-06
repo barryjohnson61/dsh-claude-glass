@@ -1,0 +1,11 @@
+# Normalise line endings so the bundle patches stay byte-reproducible across
+# platforms: build.mjs matches literal substrings inside the aqua bundle and
+# counts every site, so a CRLF checkout would break the anchors.
+* text=auto eol=lf
+
+# Keep binaries binary.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.woff2 binary
+*.tgz binary

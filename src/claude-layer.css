@@ -1,0 +1,211 @@
+/* ============================================================================
+ * Claude Glass — the Claude visual language (aklnaaw/dsh-claude-theme)
+ *
+ * This file carries only what a token layer CANNOT express: the editorial
+ * typography split (serif for reading, sans for chrome), the radius ladder,
+ * and the DSH-specific cards claude.ai has no equivalent for.
+ *
+ * The palette itself travels as theme tokens (overrideTokens), so this sheet
+ * stays scheme-agnostic and reads the two `--cl-*` palette hooks.
+ *
+ * Selectors follow dsh-claude-theme's policy: only attributes verified against
+ * the *running* build, never [class*=…]. Re-verified by DOM census against DSH
+ * 0.2.0-rc.2 (10/2026); the original skin's `data-dsh-part` / `data-pane` /
+ * `data-dsh-surface="sidebar|overlay"` hooks no longer exist in this build, so
+ * they are not used here. Present and used below:
+ *   data-chat-flow-kind (user | assistant-step | tool-call | workflow-run |
+ *                        turn-process | turn-error | turn-tail)
+ *   data-composer-card, data-composer-seat, data-dsh-sidebar-root,
+ *   data-shell-overlay, data-slot, role, aria-*
+ * The serif reading font does NOT depend on a hook: it arrives as the
+ * --dsw-font-markdown-* tokens from the Claude palette layer.
+ * ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+ * 1. Palette plumbing
+ * ------------------------------------------------------------------------- */
+:root {
+  --cl-serif: 'Newsreader', 'Noto Serif CJK SC', 'Source Han Serif SC', 'Songti SC', Georgia, serif;
+  --cl-sans: 'Inter', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --cl-mono: 'JetBrains Mono', 'Noto Sans Mono CJK SC', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --cl-coral: #d97757;
+  --cl-coral-active: #a9583e;
+  --cl-canvas: #faf9f5;
+  --cl-soft: #f5f0e8;
+  --cl-card: #efe9de;
+  --cl-ink: #141413;
+  --cl-hairline: #e6dfd8;
+  --cl-radius-md: 8px;
+  --cl-radius-lg: 12px;
+  --cl-radius-xl: 16px;
+  --cl-radius-pill: 26px;
+}
+
+body[data-ds-dark-theme] {
+  --cl-coral: #e08a6a;
+  --cl-coral-active: #d97757;
+  --cl-canvas: #181715;
+  --cl-soft: #1f1e1b;
+  --cl-card: #252320;
+  --cl-ink: #faf9f5;
+  --cl-hairline: #ffffff1f;
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. Typography — the editorial voice
+ * Claude's split is unbreakable: serif for reading, sans for chrome.
+ * ------------------------------------------------------------------------- */
+body {
+  font-family: var(--cl-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* The reading column carries the serif. Belt and braces: the same font also
+   arrives as --dsw-font-markdown-* tokens, so this only has to hold if a token
+   is ever dropped. Scoped to the two conversational kinds so neither tool
+   output nor the trajectory pane inherits the serif. */
+:is([data-chat-flow-kind="user"], [data-chat-flow-kind="assistant-step"]) :is(p, li, blockquote, td) {
+  font-family: var(--cl-serif);
+  font-optical-sizing: auto;
+  font-kerning: normal;
+  letter-spacing: 0;
+}
+
+/* Headings: serif, weight 400, negative tracking.
+   DESIGN-claude.md: "Copernicus at 700 reads as bombastic; the system stays at 400." */
+:is(h1, h2, h3) {
+  font-family: var(--cl-serif) !important;
+  font-weight: 400 !important;
+  letter-spacing: -0.02em;
+}
+h1 { letter-spacing: -0.03em; }
+
+/* Code stays monospace — never let the serif leak in. */
+:is(code, pre, kbd, samp) {
+  font-family: var(--cl-mono);
+  font-variant-ligatures: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. Surfaces, hairlines, elevation
+ * Claude's philosophy: colour-block first, shadow rare.
+ * ------------------------------------------------------------------------- */
+/* In float (mica) mode the sidebar is a floating glass card and already carries
+   its own coral hairline, so a second rule here would draw a line inside the
+   card. Only the flat "compatibility" mode needs one. */
+[data-dsh-compat] [data-dsh-sidebar-root] {
+  border-right: 1px solid var(--dsw-alias-border-l1);
+}
+
+[role="dialog"],
+[data-shell-overlay] {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--cl-radius-lg);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+[role="tooltip"] {
+  border-radius: 6px;
+  font-family: var(--cl-sans);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. The composer — the signature pill
+ * ------------------------------------------------------------------------- */
+[data-composer-card] {
+  border-radius: var(--cl-radius-pill);
+  border: 1px solid var(--cl-hairline);
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+[data-composer-card]:focus-within {
+  border-color: color-mix(in srgb, var(--cl-coral) 55%, var(--cl-hairline));
+  /* 3px coral ring at ~15% — DESIGN-claude.md text-input-focused */
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cl-coral) 15%, transparent);
+}
+
+[data-composer-seat] {
+  font-family: var(--cl-sans);
+}
+
+/* ---------------------------------------------------------------------------
+ * 5. Message rows
+ * User turns read as a soft card; assistant turns stay on the canvas.
+ * ------------------------------------------------------------------------- */
+[data-chat-flow-kind="user"] {
+  border-radius: var(--cl-radius-lg);
+}
+
+/* ---------------------------------------------------------------------------
+ * 6. Tool-call cards — DSH-specific, so they get Claude's card language rather
+ * than being left stock (which would read as cold grey blocks on cream).
+ *
+ * NO overflow:hidden on any of these nodes, and turn-process is not styled as
+ * a card at all: these nodes carry content we do not control (tool output,
+ * thinking text), and clipping them can only ever lose information.
+ * ------------------------------------------------------------------------- */
+[data-chat-flow-kind="tool-call"],
+[data-chat-flow-kind="workflow-run"] {
+  border-radius: var(--cl-radius-lg);
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+/* The thinking block: colours only, never geometry. */
+[data-chat-flow-kind="turn-process"] {
+  border-radius: var(--cl-radius-lg);
+}
+
+[data-chat-flow-kind] {
+  font-family: var(--cl-sans);
+}
+
+/* ---------------------------------------------------------------------------
+ * 7. Controls
+ * ------------------------------------------------------------------------- */
+[role="treeitem"][aria-selected="true"] {
+  border-radius: var(--cl-radius-md);
+}
+
+button,
+[role="button"],
+[role="tab"],
+[role="menuitem"] {
+  border-radius: var(--cl-radius-md);
+}
+
+:focus-visible {
+  outline: 2px solid var(--cl-coral);
+  outline-offset: 2px;
+}
+
+button,
+[role="button"],
+[role="tab"],
+a {
+  transition: background-color .13s ease, border-color .13s ease,
+              color .13s ease, opacity .13s ease;
+}
+
+/* ---------------------------------------------------------------------------
+ * 8. Scrollbars
+ * ------------------------------------------------------------------------- */
+::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: var(--dsw-alias-scrollbar-bg-l1);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dsw-alias-scrollbar-hover-l1);
+}
+
+/* ---------------------------------------------------------------------------
+ * 9. Reduced motion
+ * ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  button, [role="button"], [role="tab"], a, ::-webkit-scrollbar-thumb {
+    transition: none;
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "dsh-claude-glass-toggle-repro",
+  "private": true,
+  "type": "commonjs",
+  "description": "Scope marker: main.js is a CommonJS Electron entry point, while the repository root is type=module."
+}

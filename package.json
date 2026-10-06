@@ -1,0 +1,25 @@
+{
+  "name": "dsh-claude-glass-build",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Build harness for dsh-claude-glass — fuses dsh-claude-theme's palette and typography with dsh-client-ui-aqua's glass material and motion into one DSH client plugin.",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "verify": "node verify.mjs dist/dsh-claude-glass/lib/client.js",
+    "pack": "node pack.mjs",
+    "release": "node build.mjs && node verify.mjs dist/dsh-claude-glass/lib/client.js && node pack.mjs",
+    "tokens": "node -e \"const t=require('./assets/claude-tokens.json');console.log(Object.keys(t).length,'tokens')\""
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "theme",
+    "glassmorphism",
+    "claude"
+  ]
+}
