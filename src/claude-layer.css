@@ -227,12 +227,18 @@ a {
  * in the plain web build the same tokens back the canvas and the slid-off
  * details pane, and translucent values there are what caused the milky
  * "白块" and the washed-out flat mode in the first place.
+ *
+ * HOW translucent: 30%, not "just a little". mica mode is *supposed* to be the
+ * fluid-forward look. A first pass at 58% / 55% only let the fluid peek through
+ * at the edges and still read as flat next to the reference the user pointed at,
+ * where the coral wash is plainly visible behind the whole conversation column
+ * while the text stays crisp on the message rows.
  * ------------------------------------------------------------------------- */
 html[data-windows-titlebar] [data-dsh-frame] {
-  background: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 58%, transparent);
+  background: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 30%, transparent);
 }
 html[data-windows-titlebar] [data-dsh-center-col] {
-  background: color-mix(in srgb, var(--dsw-alias-bg-base) 55%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-bg-base) 30%, transparent);
 }
 
 /* A *closed* details pane is slid off-canvas (`inset: 0 0 0 -624px`) but stays
