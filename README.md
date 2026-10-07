@@ -22,10 +22,10 @@
 
 ## 2. 与原版 aqua 的差异
 
-不是简单换色，`build.mjs` 对 aqua 的预构建 bundle 做了 **358 处可复现的字面量替换**：
+不是简单换色，`build.mjs` 对 aqua 的预构建 bundle 做了 **359 处可复现的字面量替换**：
 
 1. **调色板**：`AQUA_TOKEN_OVERRIDES` 整体换成从 `claude/skin.css` 解析出的 Claude 令牌；
-   `COMPAT_SURFACE_OVERRIDES` 的 24 个表面令牌改写成半透明版本。
+   `COMPAT_SURFACE_OVERRIDES` 保留上游的 **21 个表面键名**，但值改成**实心**的 Claude 色（见 §5.3 (c)）。
 2. **冷蓝硬编码**：`aqua.module.css` 里写死的 `#132d53`(19 处) / `#94b4dc`(18 处) / `#6e9be8` / `#96bef5`
    等描边、辉光、文字、环境渐变，逐条映射到 Claude 的暖色（`#141413` / `#faf9f5` / `#d97757` / `#e8dfcd`）。
 3. **圆角**：`14 / 20 / 24 / 10` → Claude 阶梯 `12 / 16 / 26 / 8`。
@@ -40,6 +40,13 @@
 8. **侧栏永不下压**（`spotlight.ts` 的 `tiltable()`，见 §5.2）：上游只在「有 `[role=dialog]` 打开」
    时才拒绝给侧栏列写 3D 倾斜 transform，范围比它自己注释里写的「the sidebar NEVER tilts」窄，
    于是在 Windows 标题栏模式下把「收起侧边栏」按钮从 `(12,6)` 顶到 `(24,55)`。
+9. **兼容模式的三条根治**（见 §5.3）：`COMPAT_SURFACE_OVERRIDES` 保留上游的 21 个键名、
+   但值改成**实心**（不再让 `--dsw-alias-bg-base` 等大面积令牌半透明化，滑出的右侧栏面板不再变成薄纱，
+   也不再让 55% 的 `bg-layer-1` 把每条对话行都变成薄纱）；
+   兼容模式的通配 `backdrop-filter:blur(12px)` 从 `[class*=card|bubble|panel|popover|dropdown]`
+   收敛到「小浮层」`[role=menu|tooltip|listbox]` / `[popover]`
+   （**不能**把 `[role=dialog]` 或 `[data-shell-overlay]` 放进去：后者是铺满 frame 的
+   overlay 层，会让整个应用发糊）。
 
 **刻意没有做的事**（继承 claude-theme 踩过的坑）：不给 `tool-call` / `turn-process` / `workflow-run`
 加 `overflow:hidden`——这些节点承载工具输出与思考文本，裁切只会丢信息。
@@ -230,6 +237,111 @@ if (spot.matches("[class*=\"sidebarCol\"]") && document.querySelector("[role=\"d
 `verify.mjs` 里加了对应的守卫（`--- sidebar tilt guard ---`）：`tiltable()` 里必须存在无条件语句
 `if (spot.matches("[class*=\"sidebarCol\"]")) return false;`、且不得再有 `[role="dialog"]` 判据，
 否则 `GUARD FAILURES` + 退出码 1。对照：上游 aqua 跑同一守卫 → `BAD unconditional=false dialogGated=true` / exit 1。
+
+### 5.3 兼容模式的三处修复（2026-10-06 追加的第三组兼容修复）
+
+现象：切到**兼容模式**后，对话区右半边被一块乳白色「白块」盖住、正文在那里被硬切；
+**打开右侧栏就正常**；桌面窗口与浏览器弹出窗口都能看到，普通网页标签页不明显。
+第二轮又追加一条实测反馈：**「方向反了，现在兼容模式完全糊掉了」**——整块界面像蒙了一层雾。
+
+根因有三条，都出在兼容模式，且都在本插件这一侧：
+
+**(a) `--dsw-alias-bg-base` 不该进兼容模式的半透明表层。**
+DSH 核心把「已关闭」的右侧栏面板以 `position:absolute; inset:0 0 0 -624px` 滑出到画面右半
+（父容器 `BynINW_rightbarCol` 宽 0、`overflow:visible`，所以它照样绘制）。
+该面板内部的 dockkit pane（`_tabHost_6nhg2 … _pane_6nhg2`）画的背景就是 `var(--dsw-alias-bg-base)`：
+
+```
+SECTION._tabHost_6nhg2_162 _pane_6nhg2 [762,40 624x760]
+  bg = color(srgb 0.980392 0.976471 0.960784 / 0.72)   ← 72% 半透明
+```
+
+切到「流体/云母」时这个令牌是不透明的 `#faf9f5`，所以滑出的面板只是一块**实心**奶油色空白，
+看不出问题；兼容模式一旦把它做成 72% 半透明，面板就变成一层**薄纱**，正文从底下透出来 —— 这就是「白块」。
+决定性实验：给该面板 `visibility:hidden !important` 后白块完全消失、正文清晰铺满全宽。
+
+上游 aqua 的 `COMPAT_SURFACE_OVERRIDES` **刻意只覆盖 21 个「浮层/行内」令牌**
+（menu / selector / tip / bubble / tooltip-bg / toast-bg / input-major / login-input /
+bg-layer-1..3 / bg-overlay / bg-module-platform / bg-multi-select 与 markdown 的
+code-block / banner / inline-code / citation / tag / placeholder，alpha 0.45–0.88），
+**明确不含** `--dsw-alias-bg-base`（画布）、`--dsw-alias-bg-mask-*`（遮罩）、
+`--dsw-specific-sidebar-fill`、`--dsw-alias-bg-skeleton`。
+
+上一版是我用一条宽泛的正则自己拼的 24 个键：**多**了上面四个「大面积」令牌（→ 白块），
+**少**了 markdown / tooltip 那一组（→ 兼容模式下代码块与提示条不再有玻璃感）。
+**修法**：改成「镜像上游的键表」——`readCompatSurfaceKeys()` 从上游 bundle 里把 21 个键抄出来，
+逐个换成对应的 Claude 色（这 21 个键在 `claude/skin.css` 里全部存在，21/21 实测）。
+
+**(b) 兼容模式的通配 `backdrop-filter` 太宽。** 上游原文：
+
+```css
+[data-dsh-compat] [role=menu],[data-dsh-compat] [role=tooltip],
+[data-dsh-compat] [class*=card],[data-dsh-compat] [class*=bubble],
+[data-dsh-compat] [class*=panel],[data-dsh-compat] [class*=popover],
+[data-dsh-compat] [class*=dropdown]{backdrop-filter:blur(12px)}
+```
+
+`[class*=…]` 在这个 DOM 里的命中面完全失控——实测 `[class*=card]` 命中 16 个
+（含 15 个 `md-code-block` 与 composer 卡）、`[class*=bubble]` 命中 4 个、
+`[class*=panel]` 命中 **22 个**（连 `svg._2H3hWW_panelIcon`、`NAV._2H3hWW_panelList`、
+`BUTTON._2H3hWW_panelRow`、`SPAN._2H3hWW_panelTitle` 这种纯文字 span 都中），
+其中就包括上面那块滑出的右侧栏面板。
+
+**修法**：收敛到真正「小而瞬时」的浮动层 ——
+
+```css
+[data-dsh-compat] [role=menu],[data-dsh-compat] [role=tooltip],
+[data-dsh-compat] [role=listbox],[data-dsh-compat] [popover]{backdrop-filter:blur(12px)}
+```
+
+> **踩过的坑**：第一版收敛时把 `[role=dialog]` 和 `[data-shell-overlay]` 也列了进去，
+> 结果**整个应用都糊了**——DSH 的 `BynINW_overlayLayer` 带着 shell-overlay 钩子、
+> 铺满整个 frame，任何浮层一打开它就跟着被 `blur(12px)`。
+> 设置对话框本身也已经是全尺寸表面并且自带不透明底色。
+> 所以这里**只留「小浮层」**：菜单 / 提示条 / 列表框 / 原生 popover。
+> `verify.mjs` 的守卫现在会同时拦 `[class*=…]` 与 `[role=dialog]` / `[data-shell-overlay]`。
+
+**(c) 兼容模式的表面层必须实心，不能照抄上游的 alpha。**
+上游给这 21 个表面令牌配的是 0.45–0.88 的 alpha（`rgba(..., 0.45~0.6)`），
+那是为**去饱和的青色流体**调的；换到 Claude 的暖色 + 珊瑚流体之后，每一层表面都变成
+盖在流体上的一层薄纱，**整块界面发糊**。实测 `getComputedStyle(document.body)` 里
+本插件的 21 个兼容表面令牌全是 `color-mix(...)`：
+
+```
+--dsw-alias-bg-layer-1:  color-mix(in srgb, #f5f0e8 55%, transparent)
+--dsw-alias-bg-layer-2:  color-mix(in srgb, #efe9de 50%, transparent)
+--dsw-alias-bg-layer-3:  color-mix(in srgb, #e8e0d2 45%, transparent)
+--dsw-alias-bg-overlay:  color-mix(in srgb, #faf9f5f7 60%, transparent)
+--dsw-alias-markdown-code-block: color-mix(in srgb, #f5f0e8 50%, transparent)
+--dsw-specific-bubble:   color-mix(in srgb, #faf9f5 55%, transparent)
+--dsw-specific-menu:     color-mix(in srgb, #ffffff 60%, transparent)
+--dsw-alias-toast-bg:    color-mix(in srgb, #252320 85%, transparent)
+--dsw-alias-tooltip-bg:  color-mix(in srgb, #141413 88%, transparent)
+```
+
+其中 `--dsw-alias-bg-layer-1`（55%）被**每一条对话行**共用
+（实测 `DIV.xz4KEq_flowItem` 的 `background = color(srgb 0.960784 0.941176 0.909804 / 0.55)`），
+侧栏与卡片也读它 —— 珊瑚流体从每一层表面下透出来，就是「完全糊掉了」。
+
+页面内对照实验（注入 `body{--x:#hex;}` 把这 21 个令牌改成纯色）：面板 / 侧栏 / 对话行立刻实心清爽，
+右侧只余画布本身的流体渐变。**因此定案：兼容模式的表面层一律实心**——
+键表照抄上游（键是设计决策），alpha 不照抄（值是配色决策），
+生成时直接写入 Claude 的纯色，不再产生任何 `color-mix(..., transparent)`。
+兼容模式本来就是「平板、无云母」的安全模式，实心才是它该有的样子。
+
+`verify.mjs` 为这三条各加了守卫：
+
+- **compat blur scope guard**：全 bundle 只许有一处 `backdrop-filter:blur(12px)`，
+  且其选择器里出现任何 `[class*=…]`、`[role=dialog]`、`[data-shell-overlay]` 即失败。
+- **compat solid-surface guard**：`COMPAT_SURFACE_OVERRIDES` 里不得出现
+  `--dsw-alias-bg-base` / `--dsw-alias-bg-mask` / `--dsw-specific-sidebar-fill` / `--dsw-alias-bg-skeleton`，
+  不得出现任何 `color-mix` / `transparent`（即一律实心），键数少于 10 也算失败。
+
+> 排查提示一：`document.elementsFromPoint` 会跳过 `pointer-events:none` 的覆盖层，
+> 判断「谁盖住了谁」必须自己按 rect + computed style 遍历。
+> 排查提示二：注入覆盖样式后要**修完再断言**——只把 blur 去掉，白块仍在（blur 只是加重因素），
+> 必须看那个滑出面板**自身**的背景色是不是变透明了。
+> 排查提示三：页面内注入 `<style>` / inline style 会污染后续对照，比较截图前先重载。
 
 ## 6. 仓库布局
 

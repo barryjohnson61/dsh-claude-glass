@@ -32,6 +32,7 @@ const mustExist = [
   "#faf9f5",
   "#181715",
   "ui-claude-glass",
+  "[data-dsh-compat] [role=listbox]",
 ];
 
 console.log("--- expected 0 ---");
@@ -122,6 +123,99 @@ if (tiltAt < 0) {
     console.log(`  BAD  unconditional=${unconditional} dialogGated=${dialogGated}`);
     guardFailures += 1;
   }
+}
+
+// --- regression guard: compat-mode blanket blur (2026-10-06) -----------------
+// Aqua's compat (flat, no-mica) mode blurs floating surfaces. Its selector used
+// `[class*=card|bubble|panel|popover|dropdown]`, which is a substring test
+// against hashed DSH class names: it also matched the right DETAILS PANE
+// (`OUqwTW_panel`, which stays in the layout — 624x760, pointer-events:none —
+// while the right sidebar is closed and therefore washed the right half of the
+// conversation into a milky block), every `md-code-block`, the composer card
+// and the sidebar's own `_2H3hWW_panel*` rows. Only small transient overlays
+// may remain: [role=menu|tooltip|listbox] and [popover].
+//
+// `[role=dialog]` and `[data-shell-overlay]` must NOT be in the list either:
+// DSH's `BynINW_overlayLayer` carries the shell-overlay hook and spans the whole
+// frame, so blurring it frosts the entire application as soon as any overlay
+// opens (that was a real regression, caught by the user).
+console.log("--- compat blur scope guard ---");
+const compatBlur = s.indexOf("backdrop-filter:blur(12px)");
+if (compatBlur < 0) {
+  console.log("  ok   no compat-mode blur at all");
+} else {
+  const prevClose = s.lastIndexOf("}", compatBlur);
+  const selector = s.slice(Math.max(prevClose + 1, compatBlur - 700), s.lastIndexOf("{", compatBlur));
+  const problems = [];
+  const bannedClass = /\[class\*=[^\]]*\]/.exec(selector);
+  if (bannedClass) problems.push("class-substring selector reaches core chrome: " + bannedClass[0]);
+  const bannedWide = /\[role=dialog\]|\[data-shell-overlay\]/.exec(selector);
+  if (bannedWide) problems.push("full-surface selector frosts the whole app: " + bannedWide[0]);
+  if (problems.length) {
+    for (const p of problems) console.log("  BAD  " + p);
+    guardFailures += 1;
+  } else {
+    console.log("  ok   small transient overlays only: " + selector.trim().slice(-150));
+  }
+}
+
+// --- regression guard: the compat surface layer must be SOLID (2026-10-06) ---
+// COMPAT_SURFACE_OVERRIDES is aqua's fixed list of surfaces that go translucent
+// in flat mode, at alpha 0.45-0.88. Over Claude's warm palette that made every
+// conversation row, sidebar and card a translucent sheet over the coral fluid —
+// flat mode read as "washed out" (user report: 方向反了，兼容模式完全糊掉了).
+// Two rules therefore:
+//   1. the app shell keys must NOT be in the list at all —
+//      `--dsw-alias-bg-base` is painted by body/frame/center column *and* by the
+//      right details pane while it is slid off-canvas (a milky veil over the
+//      conversation), and modal scrims read `--dsw-alias-bg-mask-*`;
+//   2. no value in the list may be translucent: the keys are upstream's, the
+//      alphas are not reused.
+console.log("--- compat solid-surface guard ---");
+let compatKeys = 0;
+{
+  const at = s.indexOf("COMPAT_SURFACE_OVERRIDES = ");
+  const brace = s.indexOf("{", at);
+  let depth = 0;
+  let i = brace;
+  let inStr = false;
+  let esc = false;
+  for (; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  const literal = at < 0 ? "" : s.slice(brace, i + 1);
+  compatKeys = (literal.match(/"--[^"]+"/g) || []).length;
+  for (const banned of ["--dsw-alias-bg-base", "--dsw-alias-bg-mask", "--dsw-specific-sidebar-fill", "--dsw-alias-bg-skeleton"]) {
+    if (literal.includes(`"${banned}`)) {
+      console.log(`  BAD  ${banned} is in the compat surface layer — the canvas would go translucent`);
+      guardFailures += 1;
+    } else {
+      console.log(`  ok   ${banned} stays opaque`);
+    }
+  }
+  if (literal.includes("transparent") || literal.includes("color-mix")) {
+    console.log("  BAD  the compat surface layer is translucent — flat mode washes out");
+    guardFailures += 1;
+  } else {
+    console.log("  ok   every compat surface is painted solid");
+  }
+}
+console.log(`  ${compatKeys} compat-mode surface key(s)`);
+if (compatKeys < 10) {
+  console.log("  BAD  compat surface layer looks empty — the compat palette was not patched");
+  guardFailures += 1;
 }
 
 if (guardFailures > 0) {

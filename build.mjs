@@ -14,10 +14,10 @@
  * build fails loudly if an anchor stops matching (i.e. the aqua base moved).
  *
  * What it changes
- *   1. AQUA_TOKEN_OVERRIDES / COMPAT_SURFACE_OVERRIDES  -> Claude's 278 `--dsw-*`
- *      tokens, parsed out of claude/skin.css (light `:root` + the
- *      `body[data-ds-dark-theme]` block). Aqua therefore no longer imposes its
- *      deep-sea palette: it pushes Claude's.
+ *   1. AQUA_TOKEN_OVERRIDES  -> Claude's 278 `--dsw-*` tokens, parsed out of
+ *      claude/skin.css (light `:root` + the `body[data-ds-dark-theme]` block).
+ *      Aqua therefore no longer imposes its deep-sea palette: it pushes Claude's.
+ *      COMPAT_SURFACE_OVERRIDES keeps aqua's own key list but paints it solid.
  *   2. Every hard-coded cool-blue literal in aqua.module.css -> its Claude
  *      counterpart (hairlines, glass fills, glow accent, ambient wash, critters,
  *      placeholder/stat text, video tint, scroll fade).
@@ -35,6 +35,15 @@
  *      attributes, `--dsh-aqua-*` custom properties and keyframe names.
  *   8. Fresh defaults: fluidHue 320 (teal) -> 158, which aqua's
  *      `glowHue = (hue + 217) % 360` maps to 15deg — Claude coral.
+ *   9. Three compatibility-mode (flat, no-mica) defects of the aqua base:
+ *      a. the sidebar column is never tilted by the spotlight engine;
+ *      b. the blanket `backdrop-filter:blur(12px)` is restricted to genuinely
+ *         floating overlays, because `[class*=panel|card|bubble]` also matched
+ *         core shell containers (the details pane, `md-code-block`, the
+ *         composer card, every `_2H3hWW_panel*` row) and washed the UI out;
+ *      c. the compat surface layer is painted solid: at aqua's 0.45-0.60 alpha
+ *         every layered surface becomes a translucent sheet over the coral
+ *         fluid, and flat mode reads as washed out.
  */
 import { readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
@@ -272,6 +281,47 @@ function fontFaceCss() {
   }).join("\n");
 }
 
+/**
+ * Read the *key list* of aqua's own COMPAT_SURFACE_OVERRIDES out of the base
+ * bundle. Only the names are taken: upstream's per-surface alphas are tuned for
+ * its desaturated teal fluid and are deliberately NOT reused (see the long
+ * comment at the call site). The literal is JS, so the inner `light:` / `dark:`
+ * keys are unquoted; a plain JSON.parse would not do.
+ */
+function readCompatSurfaceKeys(source) {
+  const at = source.indexOf("COMPAT_SURFACE_OVERRIDES = ");
+  if (at < 0) {
+    problems.push("COMPAT_SURFACE_OVERRIDES not found in the aqua base");
+    return new Map();
+  }
+  const brace = source.indexOf("{", at);
+  let depth = 0;
+  let i = brace;
+  let inStr = false;
+  let esc = false;
+  for (; i < source.length; i++) {
+    const c = source[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  const text = source.slice(brace, i + 1);
+  const out = new Set();
+  const re = /"(--[^"]+)"\s*:\s*\{\s*light:\s*"[^"]+",\s*dark:\s*"[^"]+"\s*\}/g;
+  let m;
+  while ((m = re.exec(text)) !== null) out.add(m[1]);
+  return out;
+}
+
 /* -------------------------------------------------------------------- main */
 
 const src0 = readFileSync(join(BASE, "lib", "client.js"), "utf8");
@@ -281,12 +331,53 @@ const skin = parseSkinTokens(readFileSync(join(CLAUDE, "skin.css"), "utf8"));
 const pairs = tokenPairs(skin.light, skin.dark);
 if (pairs.length < 200) problems.push(`token parse looks short: ${pairs.length} tokens`);
 
-const SURFACE_RE = /(bg-base|bg-layer-\d|bg-overlay|bg-skeleton|bg-mask|specific-|hovercard-bg|toast-bg)/;
-const compatPairs = pairs
-  .filter(([n]) => SURFACE_RE.test(n))
-  .map(([n, l, d]) => [n, `color-mix(in srgb, ${l} 72%, transparent)`, `color-mix(in srgb, ${d} 68%, transparent)`]);
+/* Compat-mode surface layer.
+ *
+ * Aqua ships COMPAT_SURFACE_OVERRIDES for flat ("compatibility") mode, where the
+ * mica backdrop is unavailable: a *fixed list* of layered surfaces is painted
+ * with a translucent version of the palette instead (alpha 0.45-0.88).
+ *
+ * That list is the right *key* set — it is a design decision, not something to
+ * re-derive from token-name patterns. Two things about it matter:
+ *
+ *   - it deliberately leaves out
+ *       --dsw-alias-bg-base            the canvas: the app shell (body, frame,
+ *                                      center column) reads it, and the right
+ *                                      details pane paints it while it is slid
+ *                                      off-canvas, so making it translucent
+ *                                      turns that pane into a milky veil over
+ *                                      the conversation;
+ *       --dsw-alias-bg-mask-*          modal scrims would stop masking;
+ *       --dsw-specific-sidebar-fill
+ *       --dsw-alias-bg-skeleton
+ *   - it deliberately includes the markdown / menu / tooltip / toast / input
+ *     surfaces.
+ *
+ * But the *values* must not be copied. Aqua's alphas (0.45-0.88) are tuned for a
+ * desaturated teal fluid; over Claude's warm palette and its coral fluid every
+ * layered surface at 45-60% alpha turns into a pink wash — `--dsw-alias-bg-layer-1`
+ * at 55% alone repaints every conversation row, the sidebar and every card, and
+ * the whole UI reads as "washed out" (实测反馈). Compatibility mode exists to be
+ * the *safe, flat* mode, so here it is painted SOLID: same key list, opaque
+ * Claude colour, no `color-mix(..., transparent)` anywhere.
+ *
+ * Everything the base list does not mention keeps Claude's opaque value.
+ */
+const baseCompat = readCompatSurfaceKeys(src0);
+if (baseCompat.size < 10) problems.push(`base COMPAT_SURFACE_OVERRIDES looks short: ${baseCompat.size} keys`);
+const tokenMap = new Map(pairs.map(([n, l, d]) => [n, [l, d]]));
+const compatPairs = [];
+for (const name of baseCompat) {
+  const pair = tokenMap.get(name);
+  if (!pair) {
+    problems.push(`compat surface ${name} is not a Claude token`);
+    continue;
+  }
+  // Solid, not translucent -- see the comment above.
+  compatPairs.push([name, pair[0], pair[1]]);
+}
 
-log.push(`Claude tokens: ${pairs.length} (${compatPairs.length} of them get a translucent compat-mode variant)`);
+log.push(`Claude tokens: ${pairs.length}; compat-mode surfaces: aqua's ${compatPairs.length} keys painted solid`);
 
 /* 1. token layers ---------------------------------------------------------- */
 const tokenLiteral = toLiteral(pairs);
@@ -375,6 +466,41 @@ const TILTABLE_NEW = `function tiltable(spot) {
 		}`;
 src = substitute(src, TILTABLE_OLD, TILTABLE_NEW, "sidebar column never tilts", 1);
 
+/* 10. compat fix: the blanket blur must not hit core shell containers -------- */
+// Aqua gives floating surfaces a light blur in compat mode:
+//
+//   [data-dsh-compat] [role=menu],[data-dsh-compat] [role=tooltip],
+//   [data-dsh-compat] [class*=card],[data-dsh-compat] [class*=bubble],
+//   [data-dsh-compat] [class*=panel],[data-dsh-compat] [class*=popover],
+//   [data-dsh-compat] [class*=dropdown]{backdrop-filter:blur(12px)}
+//
+// `[class*=…]` is a substring test against *hashed* DSH class names, and DSH
+// uses those words for ordinary shell chrome. Measured on 0.2.0-rc.2 the three
+// class selectors matched 42 core elements, among them
+//   OUqwTW_panel / OUqwTW_panelBody   the RIGHT DETAILS PANE. It stays in the
+//                                    layout (position:absolute, 624x760,
+//                                    pointer-events:none) while the right
+//                                    sidebar is closed, so it blurs -- and thus
+//                                    flattens to a milky wash -- the entire
+//                                    right half of the conversation;
+//   _block_7gxqk_4 md-code-block      every code block (15 of them);
+//   RlGAzG_card                       the composer card;
+//   _2H3hWW_panelList/Row/Glyph/Icon/Title   the sidebar's own nav rows, one of
+//                                    which is a plain <span> of text.
+// That is the "UI and rendering error" users see in 兼容模式. Restrict the rule
+// to *small transient* floating overlays, identified by ARIA role / the popover
+// attribute instead of by a class-name substring.
+//
+// Scope note (learned the hard way): `[role=dialog]` and `[data-shell-overlay]`
+// must NOT be in this list. DSH's `BynINW_overlayLayer` carries the shell overlay
+// hook and spans the whole frame, so blurring it frosts the entire application
+// the moment any overlay opens. The settings dialog is a full-size surface too
+// and already paints its own opaque background. Only menus, tooltips, listboxes
+// and native popovers belong here.
+const COMPAT_BLUR_OLD = `[data-dsh-compat] [role=menu],[data-dsh-compat] [role=tooltip],[data-dsh-compat] [class*=card],[data-dsh-compat] [class*=bubble],[data-dsh-compat] [class*=panel],[data-dsh-compat] [class*=popover],[data-dsh-compat] [class*=dropdown]{backdrop-filter:blur(12px)}`;
+const COMPAT_BLUR_NEW = `[data-dsh-compat] [role=menu],[data-dsh-compat] [role=tooltip],[data-dsh-compat] [role=listbox],[data-dsh-compat] [popover]{backdrop-filter:blur(12px)}`;
+src = substitute(src, COMPAT_BLUR_OLD, COMPAT_BLUR_NEW, "compat blur limited to floating overlays", 1);
+
 /* ------------------------------------------------------------ append layer */
 const layerCss = readFileSync(join(ROOT, "src", "claude-layer.css"), "utf8");
 {
@@ -430,14 +556,14 @@ writeFileSync(join(OUT, "package.json"), JSON.stringify({
   version: VERSION,
   description: "Claude Glass — dsh-claude-theme's warm editorial palette and typography driving dsh-client-ui-aqua's glass material and motion (unofficial integration build)",
   keywords: ["dsh", "dsh-plugin", "dsh-plugins", "deepseek-harness", "cordis", "theme", "glassmorphism", "claude", "aqua"],
-  repository: { type: "git", url: "git+https://github.com/aklnaaw/dsh-claude-theme.git" },
+  repository: { type: "git", url: "git+https://github.com/barryjohnson61/dsh-claude-glass.git" },
   dshCompatPatch: {
     by: "dsh-claude-glass build.mjs",
     forRuntime: "0.2.0-rc.2",
     base: `${OLD_PKG}@${basePkg.version}`,
     changes: [
       `AQUA_TOKEN_OVERRIDES -> ${pairs.length} Claude --dsw-* tokens parsed from dsh-claude-theme/claude/skin.css`,
-      `COMPAT_SURFACE_OVERRIDES -> ${compatPairs.length} translucent Claude surface tokens`,
+      `COMPAT_SURFACE_OVERRIDES -> aqua's ${compatPairs.length} compat-mode surface keys, painted SOLID in Claude's colour (the key list is upstream's, the 0.45-0.88 alphas are not reused: over Claude's warm palette a translucent --dsw-alias-bg-layer-1 repaints every conversation row, sidebar and card and the whole flat mode reads as a wash). The opaque canvas --dsw-alias-bg-base, the modal scrims --dsw-alias-bg-mask-*, --dsw-specific-sidebar-fill and --dsw-alias-bg-skeleton are deliberately NOT in that list`,
       "aqua.module.css: cool-blue literals recoloured to the Claude palette",
       "aqua.module.css: radius ladder 14/20/24/10 -> 12/16/26/8 (Claude)",
       "aqua.module.css: Space Grotesk overrides -> var(--cl-serif) / var(--cl-sans)",
@@ -446,6 +572,8 @@ writeFileSync(join(OUT, "package.json"), JSON.stringify({
       "namespace: dsh-aqua* -> dsh-cglass*, dsh.ui-aqua.* -> dsh.claude-glass.*",
       "default fluidHue 320 (teal) -> 158 (Claude coral)",
       "spotlight.ts tiltable(): the sidebar column never tilts (upstream only skipped it while a [role=dialog] was open, which re-anchored the Windows-titlebar sidebar toggle via the transform containing block)",
+      "compat mode: the blanket [class*=card|bubble|panel|popover|dropdown] backdrop-filter is restricted to small transient overlays ([role=menu|tooltip|listbox], [popover]) -- the class substrings also matched the right details pane, md-code-block, the composer card and the sidebar's _2H3hWW_panel* rows. [role=dialog] and [data-shell-overlay] are deliberately excluded: DSH's full-frame overlay layer carries the shell-overlay hook and would frost the whole app",
+      "compat mode: COMPAT_SURFACE_OVERRIDES mirrored from aqua's key list instead of a token-name pattern, so the canvas (--dsw-alias-bg-base), the modal scrims (--dsw-alias-bg-mask-*), --dsw-specific-sidebar-fill and --dsw-alias-bg-skeleton stay opaque",
     ],
   },
   // npm auto-includes LICENSE and README.md but NOT NOTICE, so list it explicitly.
