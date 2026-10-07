@@ -209,3 +209,36 @@ a {
     transition: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * 10. Desktop (Electron titlebar): give the glass a backdrop again
+ *
+ * With `html[data-windows-titlebar]` the core fills the frame with
+ * `--dsw-specific-sidebar-fill` and the center column with
+ * `--dsw-alias-bg-base`. Both are opaque, so aqua's fluid canvas — a
+ * `position:fixed` layer at `z-index:-1` — ends up completely buried. The mica
+ * glass cards then blur a flat cream and 云母效果 reads as gone (measured:
+ * `[data-dsh-frame]` background `rgb(245, 240, 232)`,
+ * `[data-dsh-center-col]` background `rgb(250, 249, 245)`, while
+ * `[data-dsh-cglass-ambient]` still paints `radial-gradient(760px 420px at 50%
+ * -8%, rgba(217, 119, 87, 0.19), …)` at `z-index:-1`).
+ *
+ * Let those two fill layers carry the fluid again — but ONLY on the desktop:
+ * in the plain web build the same tokens back the canvas and the slid-off
+ * details pane, and translucent values there are what caused the milky
+ * "白块" and the washed-out flat mode in the first place.
+ * ------------------------------------------------------------------------- */
+html[data-windows-titlebar] [data-dsh-frame] {
+  background: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 58%, transparent);
+}
+html[data-windows-titlebar] [data-dsh-center-col] {
+  background: color-mix(in srgb, var(--dsw-alias-bg-base) 55%, transparent);
+}
+
+/* A *closed* details pane is slid off-canvas (`inset: 0 0 0 -624px`) but stays
+ * in the layout and still paints `--dsw-alias-bg-base`. Any translucency on that
+ * token turns it into a milky veil over the right half of the conversation —
+ * the original bug report. A closed pane must not paint at all. */
+[data-sidebar-right-panel][aria-hidden="true"] {
+  visibility: hidden;
+}
