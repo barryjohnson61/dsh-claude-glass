@@ -55,7 +55,8 @@ react                                  ^18.2.0
 ## [1.1.0] — 2026-10-13
 
 把 `dsh-claude-theme` **发行版 1007『火山晨曦』**（commit `20bfe79`，2026-10-07）相对
-1.0.0 所用 HEAD（`104f105`）的全部新功能，整体移植进本插件。
+1.0.0 所用 HEAD（`104f105`）的全部新功能，整体移植进本插件 —— 其中**请求指纹彩蛋只入库、
+实机未生效**，按「未移植」处理（见下）。
 
 上游那次发行只动了 `plugins/`：新增 `plugins/lan-access/` 全套，`plugins/skin/lib/client.js`
 +458 行（请求指纹彩蛋），`plugins/skin/package.json` 的 inject 多一项。
@@ -85,8 +86,9 @@ react                                  ^18.2.0
   上游重构不会静默改坏 glass 的构建，且移植内容留在 git 里可审查。
 - **四处改写，都写进文件头注释**：① 每个 client 半边里的 `ctx.get("slots")` → `ctx.slots`；
   ② `lib/lan-access.js` 的 profile 解析改用宿主发布的 `profileContext`；③ 彩蛋 watcher 的草稿来源
-  改用输入区自己的 facade（`props.keyboard` 发布的输入状态）；④ `LanPanel` 的遮罩改成 portal 到
-  `document.body`。②③④ 都是实机跑出来的，见下方三个「修复」小节。
+  改用输入区自己的 facade（`props.keyboard` 发布的输入状态）—— 这一改**没能**让它在实机触发，
+  彩蛋因此记为未移植（见「未移植：请求指纹彩蛋」）；④ `LanPanel` 的遮罩改成 portal 到
+  `document.body`。②④ 是实机跑出来的，见下方两个「修复」小节。
 - **客户端**：5 个 client 半边内联进**同一个** `lib/client.js`，各自包在 IIFE 里
   （`const portBrand = (function () { var module = { exports: {} }; … })()`），
   所以它们自己的 `exports.name = "dsh-claude-brand"` 之类不会污染 glass 的 `exports`；
