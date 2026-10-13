@@ -19,18 +19,27 @@
  * brand marks); side by side they would fight or double up. So their client
  * halves are lifted into `src/port/*.client.js`, each wrapped in an IIFE so a
  * top-level name cannot collide with aqua's bundle, and the two host halves
- * that own routes — lan-access and font-switcher — are lifted verbatim into
+ * that own routes — lan-access and font-switcher — are lifted into
  * `src/port/<published-name>.js` to be copied into `lib/`.
  *
- * "Verbatim" means verbatim, with exactly one rewrite, recorded in every file
- * it touches:
+ * "Verbatim" means verbatim, with every rewrite listed here and recorded in the
+ * header of each file it touches:
  *
- *   ctx.get("slots") -> ctx.slots
+ *   ctx.get("slots") -> ctx.slots        (all five client halves)
+ *   the managed patch file's resolution  (lib/lan-access.js)
  *
  * glass's client context injects `slots` directly — aqua's bundle has always
  * read it as `ctx.slots` — so the theme's defensive `ctx.get` lookup is
  * unnecessary here, and its behaviour on a context that never declared the
  * lookup is not something worth depending on.
+ *
+ * The second rewrite is a bug fix rather than a translation. Upstream resolves
+ * the profile whose `cordis.patch.yml` it edits from `DSH_PROFILE` alone, and
+ * the DSH desktop client boots the `desktop` profile without exporting it: the
+ * switch therefore wrote `profiles/web` — a profile that does not exist, so the
+ * panel reported `ENOENT` — while the running host never read the block. The
+ * Host publishes the launched profile on its `profileContext` service, so the
+ * rewrite consults that first and keeps the environment as the fallback.
  *
  * Only `plugins/skin` is a subset: its client half is a skin loader plus the
  * easter egg, and glass already owns its stylesheet and its appearance
@@ -293,9 +302,10 @@ function portSkinEgg() {
 /* ------------------------------------------- host halves -> published modules */
 
 /*
- * These are copied byte for byte under the name they will carry in `lib/`, so
- * their relative imports (`./qr.js`) resolve identically in `src/port/` and in
- * the built `dist/dsh-claude-glass/lib/`. Nothing here is spliced.
+ * These are copied under the name they will carry in `lib/`, so their relative
+ * imports (`./qr.js`) resolve identically in `src/port/` and in the built
+ * `dist/dsh-claude-glass/lib/`. Nothing here is spliced into the client bundle;
+ * `lan-access` carries one rewrite of its own — see portLanAccessHost above.
  */
 function portHost(rel, label, distName, markers) {
   const text = read(rel, label);
@@ -317,6 +327,99 @@ function portPlain(rel, label, distName, markers) {
   manifest.push([file, rel, text, Buffer.byteLength(out, "utf8")]);
 }
 
+/* ------------------------------------------- lan-access host: the one fix */
+
+/**
+ * The upstream host half resolves the profile it writes to from the
+ * environment alone (`process.env.DSH_PROFILE || "web"`). The DSH desktop
+ * client boots the `desktop` profile without exporting that variable, so the
+ * LAN switch edited `profiles/web` — no such directory, hence `ENOENT` in the
+ * panel — and the running host never saw the block. The Host publishes the
+ * launched profile on `profileContext` (`{ name, dir, patchPath, … }`), which
+ * is the authoritative fact; this rewrite puts it first and keeps the
+ * environment as the fallback.
+ *
+ * The path is recorded in `apply()` because the exported helpers are called
+ * from route handlers and have no context of their own.
+ */
+const LAN_PATCH_ANCHOR = `function patchFile() {
+  return join(profileDir(), "cordis.patch.yml");
+}`;
+
+const LAN_PATCH_FIXED = `/**
+ * The patch file this plugin manages.
+ *
+ * \`apply()\` records the launched profile the Host publishes on its
+ * \`profileContext\` service (\`{ name, dir, patchPath, ... }\`), and that fact is
+ * authoritative: the DSH desktop client boots the \`desktop\` profile WITHOUT
+ * exporting \`DSH_PROFILE\`, so resolving from the environment alone edits
+ * \`profiles/web\` while the running host never reads the block -- the switch
+ * then looks applied and silently does nothing. The environment stays as the
+ * fallback for a host that publishes no profile fact.
+ *
+ * Recorded once at apply time because the exported helpers below are called
+ * from route handlers, which have no context of their own.
+ */
+let managedPatchPath = null;
+
+function patchFile() {
+  return managedPatchPath || join(profileDir(), "cordis.patch.yml");
+}
+
+/** Record the launched profile's patch file, when the Host publishes one. */
+function learnProfile(ctx) {
+  try {
+    const fact = ctx.get("profileContext");
+    if (fact && typeof fact.patchPath === "string" && fact.patchPath.length > 0) {
+      managedPatchPath = fact.patchPath;
+    } else if (fact && typeof fact.dir === "string" && fact.dir.length > 0) {
+      managedPatchPath = join(fact.dir, "cordis.patch.yml");
+    }
+  } catch {
+    /* no profile fact on this host: keep the environment fallback */
+  }
+}`;
+
+const LAN_APPLY_ANCHOR = `export function apply(ctx) {`;
+
+const LAN_PATCH_NOTE =
+  `Rewritten: the managed patch file is taken from the Host's \`profileContext\`\n` +
+  `(name/dir/patchPath) instead of \`DSH_PROFILE\` alone, and \`apply()\` calls\n` +
+  `\`learnProfile(ctx)\` first. Upstream's environment-only lookup wrote\n` +
+  `\`profiles/web\` on the DSH desktop client, which boots the \`desktop\`\n` +
+  `profile without exporting that variable; the switch then reported ENOENT\n` +
+  `and the running host never read the block.`;
+
+function portLanAccessHost() {
+  const rel = "plugins/lan-access/lib/index.js";
+  const label = "lan-access";
+  const text = read(rel, label);
+  if (text === "") return;
+  for (const m of [
+    'export const name = "dsh-lan-access"',
+    'export const inject = ["connection", "webServer"]',
+    'import { encode } from "./qr.js"',
+    'export function apply(ctx)',
+    'requestBody: "buffered"',
+  ]) {
+    requireAny(text, m, label);
+  }
+  /* The upstream sources are checked out with CRLF on Windows, so the
+   * multi-line anchor and its replacement have to speak the file's own line
+   * endings; a single-line anchor is unaffected. */
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const patchAnchor = LAN_PATCH_ANCHOR.split("\n").join(eol);
+  const patchOk = require1(text, patchAnchor, label);
+  const applyOk = require1(text, LAN_APPLY_ANCHOR, label);
+  let out = text;
+  if (patchOk) out = out.replace(patchAnchor, LAN_PATCH_FIXED.split("\n").join(eol));
+  if (applyOk) out = out.replace(LAN_APPLY_ANCHOR, `${LAN_APPLY_ANCHOR}${eol}  learnProfile(ctx);`);
+  const file = "lan-access.js";
+  const body = HEADER(rel, text, LAN_PATCH_NOTE) + "\n" + out;
+  writeFileSync(join(OUT, file), body, "utf8");
+  manifest.push([file, rel, text, Buffer.byteLength(body, "utf8")]);
+}
+
 /* ------------------------------------------------------------------- run it */
 
 mkdirSync(OUT, { recursive: true });
@@ -327,13 +430,7 @@ portClient("plugins/font-switcher/lib/client.js", "font-switcher", "portFontSwit
 portClient("plugins/lan-access/lib/client.js", "lan-access", "portLanAccess");
 portSkinEgg();
 
-portHost("plugins/lan-access/lib/index.js", "lan-access", "lan-access", [
-  'export const name = "dsh-lan-access"',
-  'export const inject = ["connection", "webServer"]',
-  'import { encode } from "./qr.js"',
-  'export function apply(ctx)',
-  'requestBody: "buffered"',
-]);
+portLanAccessHost();
 portPlain("plugins/lan-access/lib/qr.js", "qr", "qr", ["export function encode("]);
 portHost("plugins/font-switcher/lib/index.js", "font-switcher", "font-switcher", [
   'export const name = "dsh-font-switcher"',
@@ -354,8 +451,10 @@ const MANIFEST =
   `\n\n` +
   `\`brand.client.js\`, \`crab.client.js\`, \`font-switcher.client.js\` and\n` +
   `\`lan-access.client.js\` are whole factory bodies. \`skin-egg.client.js\` is a\n` +
-  `subset of \`plugins/skin/lib/client.js\` — see its header. The one rewrite is\n` +
-  `\`ctx.get("slots") -> ctx.slots\` in all five.\n\n` +
+  `subset of \`plugins/skin/lib/client.js\` — see its header. Two rewrites, each\n` +
+  `recorded in the header of the file it touches: \`ctx.get("slots") ->\n` +
+  `ctx.slots\` in all five client halves, and \`lib/lan-access.js\`'s profile\n` +
+  `resolution, whose upstream form wrote \`profiles/web\` on the desktop client.\n\n` +
   `\`client-mount.js\` and \`host-mount.js\` are NOT generated, and they are not\n` +
   `modules either: they are the two fragments glass splices into the built\n` +
   `bundle, and they are what actually mounts these halves.\n`;

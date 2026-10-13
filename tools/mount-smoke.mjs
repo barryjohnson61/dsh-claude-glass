@@ -16,7 +16,8 @@
  * a small stand-in, so an effect that still needs a real browser is reported as
  * `dom` instead of failing. usage: node tools/mount-smoke.mjs [bundleDir]
  */
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -297,8 +298,33 @@ if (exports$ && typeof exports$ === "object") {
 /* -------------------------------------------------------------- the host half */
 say("");
 say("== host half ==");
+/* Hermetic profile. The ported lan-access host half must write its managed
+ * block into the patch file the Host publishes on `profileContext`, NOT into
+ * `$DSH_HOME/profiles/<DSH_PROFILE|web>`: the desktop client boots the
+ * `desktop` profile without exporting DSH_PROFILE, so upstream's
+ * environment-only lookup edited `profiles/web`, a profile that does not even
+ * exist — the panel showed ENOENT and the running host never read the block.
+ * DSH_HOME is redirected into a sandbox so "did the fallback get used?" is an
+ * observable fact rather than a guess. */
+const sandbox = mkdtempSync(join(tmpdir(), "dsh-cglass-smoke-"));
+const livePatch = join(sandbox, "profiles", "desktop", "cordis.patch.yml");
+const fallbackPatch = join(sandbox, "profiles", "web", "cordis.patch.yml");
+const SENTINEL = "# sentinel: user content this plugin must leave alone\n";
+mkdirSync(dirname(livePatch), { recursive: true });
+writeFileSync(livePatch, SENTINEL, "utf8");
+const savedHome = process.env.DSH_HOME;
+const savedProfile = process.env.DSH_PROFILE;
+process.env.DSH_HOME = sandbox;
+delete process.env.DSH_PROFILE;
+const profileFact = { name: "desktop", dir: dirname(livePatch), patchPath: livePatch };
+
 const routes = [];
+const handlers = new Map();
 const hostCtx = {
+  /** The Host's launched-profile fact, which the fix under test reads. */
+  get(name) {
+    return name === "profileContext" ? profileFact : undefined;
+  },
   inject(d, cb) {
     const list = Array.isArray(d) ? d : [d];
     say(`  ctx.inject(${JSON.stringify(list)})`);
@@ -306,7 +332,9 @@ const hostCtx = {
       ...hostCtx,
       settings: { register: () => () => {} },
       connection: {
-        fetch: { register: (route) => (routes.push(route.path), () => {}) },
+        fetch: {
+          register: (route) => (routes.push(route.path), handlers.set(route.path, route.fetch), () => {}),
+        },
         authenticatedUrl: (url) => `${url}?token=stub`,
       },
       webServer: { host: "127.0.0.1", port: 19387, register: () => () => {}, registerUpgrade: () => () => {} },
@@ -341,6 +369,98 @@ for (const want of ["/api/dsh-lan-access/status", "/api/dsh-lan-access/bind", "/
   if (!routes.includes(want)) fail(`lan-access did not register ${want}`);
 }
 if (!routes.some((r) => r.startsWith("/api/dsh-font-switcher/"))) fail("font-switcher registered no /api/dsh-font-switcher/* route");
+
+/* ------------------------------------------------- the routes, really called */
+say("");
+say("== host routes, called ==");
+const call = async (path, query = "", init) => {
+  const handler = handlers.get(path);
+  if (typeof handler !== "function") {
+    fail(`${path} registered no fetch handler`);
+    return null;
+  }
+  try {
+    const response = await handler(new Request(`http://dsh.invalid${path}${query}`, init));
+    const text = await response.text();
+    let body = null;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = { raw: text.slice(0, 120) };
+    }
+    return { status: response.status, body };
+  } catch (error) {
+    fail(`${path} threw: ${error.message}`);
+    return null;
+  }
+};
+const post = (body) => ({
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+const status0 = await call("/api/dsh-lan-access/status");
+if (status0) {
+  say(`  GET  status              -> ${status0.status} bindHost=${status0.body?.bindHost} port=${status0.body?.port} addresses=${status0.body?.addresses?.length ?? 0} pendingBind=${JSON.stringify(status0.body?.pendingBind)}`);
+  if (status0.body?.ok !== true) fail("the status route did not answer ok");
+  if (status0.body?.port !== 19387) fail(`the status route reported port ${status0.body?.port}, expected the live 19387`);
+  if (status0.body?.pendingBind !== null) fail("the status route reported a pending bind before anything was written");
+}
+
+const enabled = await call("/api/dsh-lan-access/bind", "", post({ enabled: true }));
+if (enabled) {
+  say(`  POST bind {enabled:true} -> ${enabled.status} pendingBind=${JSON.stringify(enabled.body?.pendingBind)} restartRequired=${enabled.body?.restartRequired}`);
+  if (enabled.body?.pendingBind !== "0.0.0.0") fail("turning the switch on did not pin 0.0.0.0");
+  if (enabled.body?.restartRequired !== true) fail("turning the switch on did not report that a restart is required");
+}
+const written = existsSync(livePatch) ? readFileSync(livePatch, "utf8") : "";
+for (const needle of ["# >>> dsh-lan-access bind >>>", "host: '0.0.0.0'", "port: 19387", "compression: gzip", SENTINEL.trim()]) {
+  if (!written.includes(needle)) fail(`the managed block is missing ${JSON.stringify(needle)}`);
+}
+if (existsSync(fallbackPatch)) {
+  fail(`the switch wrote ${fallbackPatch} — the environment fallback won over the Host's profileContext (that is the desktop-profile bug)`);
+} else {
+  say(`  wrote                 -> ${livePatch.replace(sandbox, "<sandbox>")}, and never profiles/web`);
+}
+
+const bad = await call("/api/dsh-lan-access/bind", "", post({ enabled: "yes" }));
+if (bad && bad.status !== 400) fail(`a non-boolean "enabled" was answered ${bad.status}, expected 400`);
+
+const status1 = await call("/api/dsh-lan-access/status");
+if (status1 && status1.body?.pendingBind !== "0.0.0.0") fail("the status route did not remember the pending bind");
+
+const disabled = await call("/api/dsh-lan-access/bind", "", post({ enabled: false }));
+if (disabled) {
+  say(`  POST bind {enabled:false}-> ${disabled.status} pendingBind=${JSON.stringify(disabled.body?.pendingBind)}`);
+  if (disabled.body?.pendingBind !== "127.0.0.1") fail("turning the switch off did not restore the loopback bind");
+}
+const after = existsSync(livePatch) ? readFileSync(livePatch, "utf8") : "";
+if (after.includes("# >>> dsh-lan-access bind >>>")) fail("turning the switch off left the managed block behind");
+if (!after.includes(SENTINEL.trim())) fail("turning the switch off damaged unrelated content in the patch file");
+
+const qrText = "http://192.168.1.5:19387/?token=stub";
+const qr = await call("/api/dsh-lan-access/qr", `?text=${encodeURIComponent(qrText)}`);
+if (qr) {
+  const square =
+    Array.isArray(qr.body?.rows) &&
+    qr.body.rows.length === qr.body.size &&
+    qr.body.rows.every((row) => row.length === qr.body.size);
+  say(`  GET  qr                  -> ${qr.status} size=${qr.body?.size} square=${square}`);
+  if (qr.body?.ok !== true || !square) fail("the qr route did not return a square matrix");
+}
+const qrBad = await call("/api/dsh-lan-access/qr");
+if (qrBad && qrBad.status !== 400) fail(`a qr request without text was answered ${qrBad.status}, expected 400`);
+
+const manifest = await call("/api/dsh-font-switcher/manifest");
+if (manifest && manifest.status !== 200) fail(`the font-switcher manifest route answered ${manifest.status}`);
+else if (manifest) say(`  GET  font manifest       -> 200 (${Object.keys(manifest.body ?? {}).join(", ")})`);
+
+rmSync(sandbox, { recursive: true, force: true });
+if (savedHome === undefined) delete process.env.DSH_HOME;
+else process.env.DSH_HOME = savedHome;
+if (savedProfile === undefined) delete process.env.DSH_PROFILE;
+else process.env.DSH_PROFILE = savedProfile;
 
 console.log(report.join("\n"));
 if (problems.length) {

@@ -80,7 +80,8 @@ react                                  ^18.2.0
   重跑一次 + `git diff` 就能跟进上游更新。
 - **为什么 vendoring 而不是构建时 splice**：构建输入保持只有两个（aqua 基线 + `claude/`），
   上游重构不会静默改坏 glass 的构建，且移植内容留在 git 里可审查。
-- **唯一一处改写**：每个文件里的 `ctx.get("slots")` → `ctx.slots`（文件头有注释说明）。
+- **两处改写，都写进文件头注释**：① 每个 client 半边里的 `ctx.get("slots")` → `ctx.slots`；
+  ② `lib/lan-access.js` 的 profile 解析改用宿主发布的 `profileContext`（见下方「修复」一节）。
 - **客户端**：5 个 client 半边内联进**同一个** `lib/client.js`，各自包在 IIFE 里
   （`const portBrand = (function () { var module = { exports: {} }; … })()`），
   所以它们自己的 `exports.name = "dsh-claude-brand"` 之类不会污染 glass 的 `exports`；
@@ -107,8 +108,35 @@ react                                  ^18.2.0
   `sidebar.footer.action#claude-profile`、`conversation.input.left#claude-fingerprint`、品牌三处 slot）、
   crab 确实调用 `ctx.timeout`，以及宿主六条路由确实注册。它在 CI 里能在没有 GUI 的情况下抓到
   「半边没挂上」这类回归。
+- 宿主那部分还**真的调用**路由（在 `mkdtemp` 出来的沙箱 `DSH_HOME` 里，不碰真实 profile）：
+  状态查询返回绑定与地址；打开开关后 patch 文件里出现托管块、`host: '0.0.0.0'`；**关掉后块被清掉、
+  文件里的无关内容原封不动**；并断言 `$DSH_HOME/profiles/web`（即上游会写错的那个目录）**从未被创建**
+  ——这就是上面那条实机 bug 的回归守卫。
 - 动态校验也**不能**证明彩蛋在真实输入框里触发、二维码能扫、螃蟹能挂上；
   这些仍需在 GUI 里实机确认（见 README §2.1 的验收清单）。
+
+### 修复：局域网开关写错 profile（实机发现）
+
+上游 `plugins/lan-access/lib/index.js` 只从环境变量解析它要改写的 profile：
+
+```js
+function profileDir() {
+  var profile = process.env.DSH_PROFILE || "web";
+  return join(dshHome(), "profiles", profile);
+}
+```
+
+DSH 桌面端启动的是 `desktop` profile，但**不导出** `DSH_PROFILE`，于是开关去写
+`%USERPROFILE%\.dsh\profiles\web\cordis.patch.yml`：这个 profile 目录不存在，面板直接报
+`写入失败： could not write … ENOENT: no such file or directory`，而正在运行的宿主也永远不会
+读到那个块。（同一台机器上的 `@linxin666/dsh-remote-web-ui` 为同一个坑写了
+`resolveManagedProfile()`，注释里把原因写得很清楚。）
+
+修复：宿主会把启动的 profile 发布在 `profileContext` 服务上（`{ name, dir, patchPath, … }`），
+移植版优先取其 `patchPath`（退化用 `dir` + `cordis.patch.yml`），环境变量只作为没有该服务时的
+回退。路径在 `apply()` 开头由 `learnProfile(ctx)` 记一次 —— 导出的辅助函数是从路由回调里调的，
+拿不到 `ctx`。这是移植时的**有意偏离**，写在 `src/port/lan-access.js` 文件头与
+`PORT-MANIFEST.md` 里；生成器的漂移断言会让上游一旦改动这段代码就报错，而不是静默失效。
 
 ### 打包
 

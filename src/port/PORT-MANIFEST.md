@@ -13,14 +13,16 @@ re-run the script against a newer theme checkout and review the diff.
 | `font-switcher.client.js` | `plugins/font-switcher/lib/client.js` | `sha256:1030cbf690b65bff` | 19415 |
 | `lan-access.client.js` | `plugins/lan-access/lib/client.js` | `sha256:0bd9e852e424ed04` | 14112 |
 | `skin-egg.client.js` | `plugins/skin/lib/client.js` | `sha256:5932d92b3e840246` | 17584 |
-| `lan-access.js` | `plugins/lan-access/lib/index.js` | `sha256:afdbe26ee855edb5` | 12216 |
+| `lan-access.js` | `plugins/lan-access/lib/index.js` | `sha256:afdbe26ee855edb5` | 13909 |
 | `qr.js` | `plugins/lan-access/lib/qr.js` | `sha256:e36c3030f253135d` | 15838 |
 | `font-switcher.js` | `plugins/font-switcher/lib/index.js` | `sha256:b961941dd4f0ef4d` | 16366 |
 
 `brand.client.js`, `crab.client.js`, `font-switcher.client.js` and
 `lan-access.client.js` are whole factory bodies. `skin-egg.client.js` is a
-subset of `plugins/skin/lib/client.js` — see its header. The one rewrite is
-`ctx.get("slots") -> ctx.slots` in all five.
+subset of `plugins/skin/lib/client.js` — see its header. Two rewrites, each
+recorded in the header of the file it touches: `ctx.get("slots") ->
+ctx.slots` in all five client halves, and `lib/lan-access.js`'s profile
+resolution, whose upstream form wrote `profiles/web` on the desktop client.
 
 `client-mount.js` and `host-mount.js` are NOT generated, and they are not
 modules either: they are the two fragments glass splices into the built

@@ -404,12 +404,23 @@ if (!existsSync(indexFile)) {
       console.log(`  BAD  lib/${f} was not emitted`);
       guardFailures += 1;
     } else {
-      console.log(`  ok   lib/${f} (${readFileSync(p, "utf8").length} bytes)`);
+      console.log(`  ok   lib/${f} (${Buffer.byteLength(readFileSync(p, "utf8"), "utf8")} bytes)`);
     }
   }
   // lan-access imports the QR encoder by relative path: both files have to sit
   // in the same directory for that to resolve.
   const lan = readFileSync(join(dirname(file), "lan-access.js"), "utf8");
+  // The LAN switch writes the profile's patch file, and upstream resolved that
+  // path from DSH_PROFILE alone — wrong on the desktop client, which boots the
+  // `desktop` profile without exporting it, so the switch edited `profiles/web`
+  // while the running host never read the block. The Host's profileContext is
+  // the authority; the ported file has to consult it first.
+  if (!lan.includes('ctx.get("profileContext")') || !lan.includes("managedPatchPath")) {
+    console.log("  BAD  lib/lan-access.js does not take its patch file from profileContext");
+    guardFailures += 1;
+  } else {
+    console.log("  ok   lib/lan-access.js takes its patch file from the Host's profileContext");
+  }
   if (!lan.includes('from "./qr.js"') || !lan.includes("export function apply(ctx)")) {
     console.log("  BAD  lib/lan-access.js does not import ./qr.js, or lost its apply()");
     guardFailures += 1;
