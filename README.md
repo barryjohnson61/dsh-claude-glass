@@ -16,13 +16,16 @@
 | --- | --- |
 | **dsh-claude-theme** | 278 个 `--dsw-*` 颜色令牌（`#faf9f5` 画布 / `#d97757` 珊瑚 / `#181715` 暖黑深色）、完整排版阶梯、`--cl-*` 调色板钩子、圆角阶梯（8 / 12 / 16 / 26）、`claude.ai` 的卡片语言 |
 | **dsh-client-ui-aqua** | 流体着色器背景、玻璃/云母材质、小鱼与气泡等环境装饰、鼠标辉光、悬停下压、入场动画、壁纸（图/视频）层、完整的设置界面 |
+| **dsh-claude-theme 的插件套件**（1.1.0 起） | 请求指纹彩蛋、局域网访问（含手写 QR 编码器）、品牌替换、Clawd 螃蟹挂件、字体切换 —— 见 §2.1 |
 
 字体也从 claude-theme 原样搬来（四份 woff2 以 base64 内联进 bundle）：
 **Newsreader** 衬线正文 / **Inter** 界面外壳 / **JetBrains Mono** 代码。
 
 ## 2. 与原版 aqua 的差异
 
-不是简单换色，`build.mjs` 对 aqua 的预构建 bundle 做了 **359 处可复现的字面量替换**：
+不是简单换色，`build.mjs` 对 aqua 的预构建 bundle 做了 **363 处可复现的字面量替换**
+（1.0.0 是 359 处；1.1.0 增加了 4 处：客户端 `timer` 声明、移植插件拼进 factory 体、
+移植插件从 `apply()` 挂载、宿主半边合成进 `lib/index.js`）：
 
 1. **调色板**：`AQUA_TOKEN_OVERRIDES` 整体换成从 `claude/skin.css` 解析出的 Claude 令牌；
    `COMPAT_SURFACE_OVERRIDES` 保留上游的 **21 个表面键名**，但值改成**实心**的 Claude 色（见 §5.3 (c)）。
@@ -50,6 +53,35 @@
 
 **刻意没有做的事**（继承 claude-theme 踩过的坑）：不给 `tool-call` / `turn-process` / `workflow-run`
 加 `overflow:hidden`——这些节点承载工具输出与思考文本，裁切只会丢信息。
+
+### 2.1 移植自 dsh-claude-theme 的插件功能（1.1.0 新增）
+
+上游把皮肤之外的实用功能都做成了**独立插件**；glass 把其中 5 个整体搬进来，
+内联进同一个 `lib/client.js`（外部依赖为零，不新增任何 npm 包）：
+
+| 功能 | 怎么用 | 依赖的宿主服务 |
+| --- | --- | --- |
+| **请求指纹彩蛋** | 在输入框里打出**裸** `TZ=`（不带参数）→ 弹出「请求指纹」面板：系统真实时区、按该时区格式化的日期、16×12 点阵螃蟹；确认后草稿被替换成 `TZ=Asia/Shanghai`。7 天冷却；`window.__claudeFootprint` 可 `.record()/.stop()/.reset()/.show()` 手动调试 | 无（纯客户端） |
+| **局域网访问** | 侧栏底部「手机访问」图标 → 面板显示本机 LAN 地址、端口、二维码与绑定开关 | `connection` + `webServer` |
+| **品牌替换** | 星形标记替换官方品牌位，同时改 `document.title` 与 favicon；偏好存 `localStorage: dsh-claude-brand.prefs` | 无 |
+| **Clawd 螃蟹挂件** | 直接落在输入框卡片（`[data-composer-card]`）上的像素螃蟹，设置页 id `clawd` | `timer`（客户端） |
+| **字体切换** | 设置 → 字体（id `fonts`）：衬线 / 无衬线 / 等宽各选一组；切换后皮肤里所有字面量 token 自动跟随 | `connection`（客户端半边另需 host 路由） |
+
+**验收清单（静态校验查不到，必须在 GUI 里实机确认）**：
+
+1. 输入框打 `TZ=` → 面板出现，日期与系统时区一致，确认后草稿变成 `TZ=Asia/Shanghai`；
+   再打一次不会立刻重复弹出（冷却）。
+2. 侧栏底部出现「手机访问」，点开后状态/二维码都能出图（二维码用手机扫一下最稳）。
+   若宿主没配置 LAN 绑定，这里应显示失败而不是白屏。
+3. 品牌位（侧栏顶部 + 新会话首屏）出现星形标记；窗口标题与 favicon 一起变。
+4. 输入框卡片右下出现螃蟹；`localStorage` 里能看到 `dsh-claude-crab.prefs`。
+5. 设置 → 字体：三个角色切换后，正文（衬线）/ 外壳（无衬线）/ 代码（等宽）立刻变；
+   刷新后仍保持。
+6. 设置侧栏多出 **字体** 与 **Clawd** 两段（皮肤加载器自带的 `Claude-X` 段**没有**移植，
+   它属于上游的皮肤商店 UI，glass 的皮肤由 `build.mjs` 直接编进 bundle）。
+
+**降级行为**：5 个功能各自 `ctx.inject` + 独立 try/catch 挂载，某一个失败只会在控制台留一行
+`[claude-glass] <id> skipped: …`，不影响其余功能与皮肤本体。
 
 ## 3. 安装
 
@@ -343,6 +375,33 @@ code-block / banner / inline-code / citation / tag / placeholder，alpha 0.45–
 > 必须看那个滑出面板**自身**的背景色是不是变透明了。
 > 排查提示三：页面内注入 `<style>` / inline style 会污染后续对照，比较截图前先重载。
 
+### 5.4 上游插件更新后重新移植（1.1.0 起的常规操作）
+
+§2.1 那 5 个功能是 `dsh-claude-theme` 仓库里 `plugins/` + `brand-plugin/` + `crab-plugin/`
+的代码。它们**不能**作为独立插件和 glass 并存（glass 只占一个插件行，而这些插件要注册
+glass 已经拥有的 slot 与设置页），所以复制进来时是 vendored 的 —— 生成物在 `src/port/`，
+已提交进 git。上游更新后重跑生成器即可，不要手改 `src/port/`：
+
+```powershell
+# 1) 更新上游检出（任意 clone / worktree 都行）
+git -C ..\dsh-claude-theme fetch --all
+
+# 2) 重跑生成器（默认读 ..\dsh-claude-theme，也可用 DSH_CLAUDE_THEME_ROOT）
+node tools\port-from-theme.mjs --theme ..\dsh-claude-theme
+
+# 3) 只应出现上游真正改过的文件；PORT-MANIFEST.md 会同时更新上游 commit 与哈希
+git diff --stat src\port
+
+# 4) 照 §5 开头重建、verify、pack
+```
+
+退出码：`0` 正常写出，`1` 上游结构漂移（wrapper 形状或 slice 锚点变了 —— 会打印
+`PORT PROBLEMS:` 并**拒绝**写出半截移植），`2` 参数用错。`--theme` 指向上游仓库根
+（不是 `claude/`；那个是 `build.mjs --claude` 的输入）。
+
+`src/port/PORT-MANIFEST.md` 记录本次移植对应的上游 commit 与每个文件的 sha256 前 16 位，
+所以「这段 vendored 代码来源哪一版」永远可查。
+
 ## 6. 仓库布局
 
 ```
@@ -351,8 +410,18 @@ dsh-claude-glass/
 ├─ verify.mjs                校验：字面量计数 + 两处侧栏回归守卫（必须传 bundle 路径）
 ├─ pack.mjs                  打包：探测 pnpm/npm，出 tgz，可 --dest 投递
 ├─ src/
-│  └─ claude-layer.css       手写的 Claude 版式层（追加到 aqua 主样式表末尾）
+│  ├─ claude-layer.css       手写的 Claude 版式层（追加到 aqua 主样式表末尾）
+│  └─ port/                  从 dsh-claude-theme 移植的插件代码（生成物，已提交）
+│     ├─ PORT-MANIFEST.md    上游 commit + 每个文件的 sha256 与字节数
+│     ├─ brand.client.js     ├─ crab.client.js     ├─ font-switcher.client.js
+│     ├─ lan-access.client.js├─ skin-egg.client.js （彩蛋子集 + glass 自己的接线）
+│     ├─ client-mount.js     applyPortedThemePlugins：5 个客户端半边怎么挂
+│     ├─ host-mount.js       宿主半边怎么挂（splice 进 lib/index.js）
+│     ├─ lan-access.js       host 半边：状态/绑定/二维码三条路由
+│     ├─ font-switcher.js    host 半边：manifest/file/reveal 三条路由
+│     └─ qr.js               上游的手写 byte-mode QR 编码器（零依赖）
 ├─ tools/
+│  ├─ port-from-theme.mjs    §5.4 的再移植生成器（重跑即跟进上游）
 │  └─ toggle-repro/          §5.1 侧栏包含块缺陷的真 Electron 台架（真核心 CSS）
 │     ├─ main.js             `electron main.js <bundleA> <bundleB>`，输出 JSON 对照
 │     ├─ core-layout-css.txt 从 dsh-client-ui-layout 抽出的核心 CSS
@@ -379,6 +448,7 @@ dsh-claude-glass/
 | **本整合（整体）** | **AGPL-3.0-only** | `LICENSE` |
 | 玻璃材质、动效引擎、设置界面、运行期代码 | AGPL-3.0-only，来自 `dsh-client-ui-aqua` 1.3.1-patch.4 | `LICENSE`（同一份 AGPL 全文） |
 | 调色板、排版阶梯、版式语言 | MIT，Copyright (c) 2026 dsh-claude-theme contributors | `licenses/dsh-claude-theme.txt` |
+| 移植的插件代码（§2.1 那 5 项，`src/port/`） | MIT，同上（与皮肤同一个仓库、同一份许可） | 同上 |
 | Newsreader / Inter / JetBrains Mono 四份 woff2 | SIL OFL 1.1 | 同上（含字体署名与完整 OFL 正文） |
 | 运行期 peer 依赖（React、cordis、`@deepseek-ai/*`） | 各自上游许可，不随包分发 | `package.json` 的 `peerDependencies` |
 

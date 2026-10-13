@@ -40,12 +40,73 @@
 @deepseek-ai/dsh-client-ui-settings-plugins
 @deepseek-ai/dsh-client-ui-slots
 @deepseek-ai/dsh-client-ui-primitives
+@deepseek-ai/dsh-client-ui-renderer        ← 1.1.0 移植插件需要
+@deepseek-ai/dsh-client-ui-conversation    ← 1.1.0 移植插件需要
+@deepseek-ai/dsh-client-ui-sidebar         ← 1.1.0 移植插件需要
 @deepseek-ai/dsh-invariants
 @deepseek-ai/cordis                    ^4.0.1
 react                                  ^18.2.0
 ```
 
 针对的 DSH 运行时：**0.2.0-rc.2**（`dshCompatPatch.forRuntime`）。
+
+---
+
+## [1.1.0] — 2026-10-13
+
+把 `dsh-claude-theme` **发行版 1007『火山晨曦』**（commit `20bfe79`，2026-10-07）相对
+1.0.0 所用 HEAD（`104f105`）的全部新功能，整体移植进本插件。
+
+上游那次发行只动了 `plugins/`：新增 `plugins/lan-access/` 全套，`plugins/skin/lib/client.js`
++458 行（请求指纹彩蛋），`plugins/skin/package.json` 的 inject 多一项。
+`claude/`（skin.css / patches.css / skin.json / 四份 woff2）**一行没改** ——
+所以 1.1.0 的令牌表、圆角阶梯、字体与 1.0.0 完全一致，只是把插件套件补齐。
+
+### 新增的能力（5 项，全部来自上游同一发行版）
+
+| 功能 | 上游出处 | 在 glass 里的形态 |
+| --- | --- | --- |
+| **请求指纹彩蛋** | `plugins/skin/lib/client.js` L427-L823 + apply 接线 | 输入框里打出裸 `TZ=` 时，弹出「请求指纹」面板（系统真实时区 + 按该时区格式化的日期 + 16×12 点阵螃蟹），确认后把草稿替换成 `TZ=Asia/Shanghai`；7 天冷却，`window.__claudeFootprint` 可手动 `.record()/.stop()/.reset()/.show()` |
+| **局域网访问** | `plugins/lan-access/` | 侧栏底部「手机访问」入口 + 状态/绑定/二维码三张 host 路由（`/api/dsh-lan-access/{status,bind,qr}`）；二维码是自带的手写 byte-mode QR（versions 1-6, L/M），内联 SVG，无第三方依赖 |
+| **品牌替换** | `brand-plugin/lib/client.js` | 星形标记 + 文字标识替换官方品牌位（`sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark`，以 `priority: -10` 遮蔽官方注册）+ `document.title` 与 favicon；`localStorage: dsh-claude-brand.prefs` |
+| **Clawd 螃蟹挂件** | `crab-plugin/lib/client.js` | 直接挂在 `[data-composer-card]` 上的像素螃蟹（可选跟随主题、多行台词），7 天冷却的稀有变体；`localStorage: dsh-claude-crab.prefs`，设置页 id `clawd` |
+| **字体切换** | `plugins/font-switcher/` | 设置页「字体」段（id `fonts`）：衬线/无衬线/等宽三个角色各选一组；实现手法是**同名 family 再声明一遍 `@font-face`**，而不是改令牌，所以皮肤里 181 处字面量 token 自动跟着走；host 半边提供 `/api/dsh-font-switcher/{manifest,file,reveal}` |
+
+### 移植方式（可重跑，不是手抄）
+
+- **`tools/port-from-theme.mjs`**：从上游仓库读 5 个 client 半边 + 2 个 host 半边，剥掉
+  `window.__ModuleLoader__.load({…})` 外壳，落成 `src/port/*.js`（vendored），并生成
+  `src/port/PORT-MANIFEST.md`（上游 commit + 每文件 sha256 前 16 位 + 字节数）。
+  重跑一次 + `git diff` 就能跟进上游更新。
+- **为什么 vendoring 而不是构建时 splice**：构建输入保持只有两个（aqua 基线 + `claude/`），
+  上游重构不会静默改坏 glass 的构建，且移植内容留在 git 里可审查。
+- **唯一一处改写**：每个文件里的 `ctx.get("slots")` → `ctx.slots`（文件头有注释说明）。
+- **客户端**：5 个 client 半边内联进**同一个** `lib/client.js`，各自包在 IIFE 里
+  （`const portBrand = (function () { var module = { exports: {} }; … })()`），
+  所以它们自己的 `exports.name = "dsh-claude-brand"` 之类不会污染 glass 的 `exports`；
+  在 glass 自己 `apply()` 之后由 `applyPortedThemePlugins(ctx)` 用 `ctx.inject(deps, …)`
+  逐个挂载，每个都单独 try/catch —— 单个失败只降级那一个功能。
+- **`inject` 扩了 `"timer"`**：crab 在 `ctx.effect` 里调 `ctx.timeout`，而 DSH 客户端运行时
+  只在插件声明 `inject: ['timer']` 时才给 `ctx.timeout`（browser timer 全局被禁用）。
+  aqua 原本没有这一项，`verify.mjs` 为此加了守卫。**不要**把 crab/skin 的 slot 注册
+  写进 glass 的 `inject` 数组：`timer` 缺失会让**整个插件**加载失败，而 `ctx.inject` 只让它降级。
+- **宿主**：两个需要注册路由的半边作为 `dist/lib/lan-access.js` + `lib/qr.js` +
+  `lib/font-switcher.js` 单独发布（`lan-access` 内部 `import { encode } from "./qr.js"`，
+  同目录才解析得到）；`lib/index.js` 由 `applyWithPortedPlugins` 用
+  `ctx.inject(["connection","webServer"])` / `ctx.inject(["connection"])` 挂载
+  ——这两个依赖直接沿用上游各自的 `export const inject`，不是猜的。
+- 宿主的 `files:` 白名单同步加了这三个模块（`files` 是绝对白名单，漏了就打成断链包）。
+
+### 校验
+
+- `verify.mjs` 新增：客户端 `timer` 声明、6 个移植插件身份（`dsh-claude-brand|glass|crab|font-switcher|lan-access|skin`）、
+  `ctx.get("slots")` 残留为 0、宿主导出形状、`lib/` 三个模块齐全。
+- 静态校验**不能**证明彩蛋在真实输入框里触发、二维码能扫、螃蟹能挂上；
+  这些需要在 GUI 里实机确认（见 README §2.1 的验收清单）。
+
+### 打包
+
+`dist/dsh-claude-glass/dsh-claude-glass-1.1.0.tgz`（535912 B，26 个条目）。
 
 ---
 

@@ -38,6 +38,15 @@ code of its own beyond the integration layer described in README.md.
     claude/patches.css   -> the layout language, reworked into src/claude-layer.css
     claude/assets/fonts/ -> Newsreader (normal + italic), Inter, JetBrains Mono,
                             base64-inlined into fonts.module.css
+    sidecar plugins      -> (added in 1.1.0) the theme repository's five plugins,
+                            vendored into src/port/: plugins/skin/lib/client.js
+                            (the `TZ=` request-fingerprint easter egg),
+                            plugins/lan-access/ (host routes + client panel + the
+                            hand-written byte-mode QR encoder), brand-plugin/,
+                            crab-plugin/, plugins/font-switcher/. Taken from
+                            upstream commit 20bfe79 (release 1007), same MIT
+                            license; src/port/PORT-MANIFEST.md records the exact
+                            revision and each file's hash.
 
   The four font binaries are redistributed unmodified under the SIL Open Font
   License 1.1; see ./licenses/dsh-claude-theme.txt.
@@ -49,6 +58,10 @@ code of its own beyond the integration layer described in README.md.
   -ui-settings-plugins, -ui-slots, -ui-primitives, @deepseek-ai/dsh-invariants,
   @deepseek-ai/cordis ^4.0.1, react ^18.2.0.
   Declared by the aqua base; see package.json "peerDependencies".
+
+  In 1.1.0 the ported theme plugins additionally require
+  @deepseek-ai/dsh-client-ui-renderer, -ui-conversation and -ui-sidebar, and the
+  client's `timer` service (crab calls ctx.timeout).
 
 --------------------------------------------------------------------------------
 4. Trademarks / affiliation

@@ -51,7 +51,7 @@ import { fileURLToPath } from "node:url";
 
 const PKG = "dsh-claude-glass";
 const OLD_PKG = "dsh-client-ui-aqua";
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const OUT = join(ROOT, "dist", PKG);
@@ -519,6 +519,91 @@ const layerCss = readFileSync(join(ROOT, "src", "claude-layer.css"), "utf8");
   void at;
 }
 
+/* ------------------------------------------- ported dsh-claude-theme plugins */
+/*
+ * dsh-claude-theme also ships five sidecar plugins, and a glass install would
+ * otherwise never see them: the `TZ=` request-fingerprint egg, LAN access, the
+ * Claude brand chrome, the Clawd crab, and the font switcher.
+ *
+ * They cannot be installed *beside* glass: glass is ONE plugin row, and every
+ * one of them claims slots and settings pages glass already owns, so side by
+ * side they would fight or double up. Instead their client halves are lifted
+ * verbatim into `src/port/*.client.js` by `tools/port-from-theme.mjs` — that
+ * script is the record of what "verbatim" means and of the single rewrite it
+ * applies — and concatenated into this bundle's factory body here. That is the
+ * only place `require` is in scope, each half is already wrapped in an IIFE,
+ * and the result stays one self-contained `lib/client.js`.
+ */
+const PORT_CLIENT = [
+  "brand.client.js",
+  "crab.client.js",
+  "font-switcher.client.js",
+  "lan-access.client.js",
+  "skin-egg.client.js",
+  "client-mount.js",
+];
+const PORT_HOST = ["lan-access.js", "qr.js", "font-switcher.js"];
+{
+  /* The ported crab calls ctx.timeout from inside a ctx.effect, and the DSH
+   * client runtime only exposes ctx.timeout / ctx.interval once the plugin
+   * declares the `timer` service ("browser timer globals are unavailable in
+   * dynamic packages — declare inject: ['timer']"). aqua never needed it, so
+   * the port has to widen the list itself; glass's own apply() is unaffected. */
+  src = substitute(
+    src,
+    '\t\tconst inject = [\n\t\t\t"theme",\n\t\t\t"slots",\n\t\t\t"locale"\n\t\t];',
+    '\t\tconst inject = [\n\t\t\t"theme",\n\t\t\t"slots",\n\t\t\t"locale",\n\t\t\t"timer"\n\t\t];',
+    "client inject: add the ported halves' timer service",
+    1,
+  );
+
+  const ported = PORT_CLIENT.map(
+    (f) =>
+      `\n\n/* ===== src/port/${f} ===== */\n` +
+      readFileSync(join(ROOT, "src", "port", f), "utf8").replace(/\s*$/, ""),
+  ).join("");
+  src = substitute(
+    src,
+    "\t\treturn module.exports;",
+    ported + "\n\n\t\treturn module.exports;",
+    "ported theme plugins concatenated into the factory body",
+    1,
+  );
+
+  /* Mount them from glass's own apply(), wrapped *after* both bindings exist
+   * rather than reaching into aqua's apply body. */
+  src = substitute(
+    src,
+    "\t\texports.inject = inject;",
+    "\t\texports.inject = inject;\n" +
+      "\n" +
+      "\t\t/* The ported dsh-claude-theme plugins are mounted from the same\n" +
+      "\t\t * apply(), right after glass's own setup. */\n" +
+      "\t\tconst clgGlassApply = exports.apply;\n" +
+      "\t\texports.apply = function applyClaudeGlass(ctx) {\n" +
+      "\t\t\tclgGlassApply(ctx);\n" +
+      "\t\t\tapplyPortedThemePlugins(ctx);\n" +
+      "\t\t};",
+    "ported theme plugins mounted from apply()",
+    1,
+  );
+}
+
+/* The two host halves that own routes are published as their own modules; the
+ * relative import between them (`./qr.js`) resolves inside `lib/` exactly as it
+ * does inside `src/port/`. Composed here, before the problems check below, so a
+ * moved anchor fails the build instead of silently shipping without them. */
+let hostIndex = readFileSync(join(BASE, "lib", "index.js"), "utf8")
+  .replace(/\[ui-aqua\]/g, "[claude-glass]")
+  .replace(/Aqua theme-layer plugin/, "Claude Glass theme-layer plugin (fork of dsh-client-ui-aqua)");
+hostIndex = substitute(
+  hostIndex,
+  "export { apply };",
+  readFileSync(join(ROOT, "src", "port", "host-mount.js"), "utf8"),
+  "host halves mounted in lib/index.js",
+  1,
+);
+
 /* ------------------------------------------------------------------- write */
 
 if (problems.length > 0) {
@@ -532,14 +617,10 @@ writeFileSync(join(OUT, "lib", "client.js"), src, "utf8");
 cpSync(join(BASE, "lib", "invariant.js"), join(OUT, "lib", "invariant.js"));
 cpSync(join(BASE, "lib", "types"), join(OUT, "lib", "types"), { recursive: true });
 
-// host half: same pass-through settings namespace ("aqua"), relabelled.
-writeFileSync(
-  join(OUT, "lib", "index.js"),
-  readFileSync(join(BASE, "lib", "index.js"), "utf8")
-    .replace(/\[ui-aqua\]/g, "[claude-glass]")
-    .replace(/Aqua theme-layer plugin/, "Claude Glass theme-layer plugin (fork of dsh-client-ui-aqua)"),
-  "utf8",
-);
+// host half: same pass-through settings namespace ("aqua"), relabelled, plus
+// the ported host halves' mounts (see src/port/host-mount.js).
+writeFileSync(join(OUT, "lib", "index.js"), hostIndex, "utf8");
+for (const f of PORT_HOST) cpSync(join(ROOT, "src", "port", f), join(OUT, "lib", f));
 
 writeFileSync(join(OUT, "cordis.patch.yml"), `# npm distribution patch layer: registers the Claude Glass client plugin into the
 # profile's browser roster. The plugin is a fusion of dsh-claude-theme (colour,
@@ -574,11 +655,44 @@ writeFileSync(join(OUT, "package.json"), JSON.stringify({
       "spotlight.ts tiltable(): the sidebar column never tilts (upstream only skipped it while a [role=dialog] was open, which re-anchored the Windows-titlebar sidebar toggle via the transform containing block)",
       "compat mode: the blanket [class*=card|bubble|panel|popover|dropdown] backdrop-filter is restricted to small transient overlays ([role=menu|tooltip|listbox], [popover]) -- the class substrings also matched the right details pane, md-code-block, the composer card and the sidebar's _2H3hWW_panel* rows. [role=dialog] and [data-shell-overlay] are deliberately excluded: DSH's full-frame overlay layer carries the shell-overlay hook and would frost the whole app",
       "compat mode: COMPAT_SURFACE_OVERRIDES mirrored from aqua's key list instead of a token-name pattern, so the canvas (--dsw-alias-bg-base), the modal scrims (--dsw-alias-bg-mask-*), --dsw-specific-sidebar-fill and --dsw-alias-bg-skeleton stay opaque",
+      "ported dsh-claude-theme 20bfe79's five sidecar plugins into lib/client.js -- the TZ= request-fingerprint egg, LAN access (host routes + sidebar panel + QR), the Claude brand chrome, the Clawd crab and the font switcher. Lifted verbatim into src/port/ by tools/port-from-theme.mjs, concatenated into the factory body, and mounted from glass's own apply()",
+      "lib/index.js also mounts the two ported host halves that own routes: dsh-lan-access and dsh-font-switcher, published as lib/lan-access.js, lib/qr.js and lib/font-switcher.js (all three whitelisted in package.json files[])",
+      "package.json dsh.client.inject gains @deepseek-ai/dsh-client-ui-renderer, -conversation and -sidebar: the client services the ported halves declared for themselves upstream",
     ],
   },
   // npm auto-includes LICENSE and README.md but NOT NOTICE, so list it explicitly.
-  files: [...(basePkg.files ?? []), "NOTICE", "CHANGELOG.md", "licenses"],
-  ...(basePkg.dsh ? { dsh: basePkg.dsh } : {}),
+  // The three ported host halves are plain lib/ modules (not types) and npm's
+  // files[] whitelist is absolute: without them the tarball would ship an
+  // index.js whose imports point at files the packer never copied.
+  files: [
+    ...(basePkg.files ?? []),
+    "lib/lan-access.js",
+    "lib/qr.js",
+    "lib/font-switcher.js",
+    "NOTICE",
+    "CHANGELOG.md",
+    "licenses",
+  ],
+  ...(basePkg.dsh
+    ? {
+        dsh: {
+          ...basePkg.dsh,
+          client: {
+            ...(basePkg.dsh.client ?? {}),
+            // The ported theme halves need the same client services their
+            // standalone plugins declared upstream (union of the five).
+            inject: [
+              ...new Set([
+                ...(basePkg.dsh.client?.inject ?? []),
+                "@deepseek-ai/dsh-client-ui-renderer",
+                "@deepseek-ai/dsh-client-ui-conversation",
+                "@deepseek-ai/dsh-client-ui-sidebar",
+              ]),
+            ],
+          },
+        },
+      }
+    : {}),
 }, null, 2) + "\n", "utf8");
 
 cpSync(join(ROOT, "LICENSE"), join(OUT, "LICENSE"));
@@ -595,7 +709,14 @@ mkdirSync(join(ROOT, "assets"), { recursive: true });
 writeFileSync(join(ROOT, "assets", "claude-tokens.json"), JSON.stringify(
   Object.fromEntries(pairs.map(([n, l, d]) => [n, { light: l, dark: d }])), null, 2) + "\n", "utf8");
 
+/* `src` is a JS string, not a Buffer: report characters, and the UTF-8 byte
+ * count alongside, because the two differ by ~4 KB once the locale table, the
+ * Chinese labels and the box-drawing comments are in. (The old label said
+ * "bytes" for a string length, which cost a confusing diff against the
+ * on-disk size.) */
+const bytes0 = Buffer.byteLength(src0, "utf8");
+const bytes = Buffer.byteLength(src, "utf8");
 console.log(`built ${OUT}`);
-console.log(`  client.js : ${src0.length} -> ${src.length} bytes (+${src.length - src0.length})`);
+console.log(`  client.js : ${bytes0} -> ${bytes} bytes  (${src0.length} -> ${src.length} chars, +${src.length - src0.length})`);
 console.log(`  edits     : ${hits}`);
 console.log(log.join("\n"));

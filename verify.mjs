@@ -1,5 +1,6 @@
 // Verify the built bundle: patch coverage + structural sanity.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 const file = process.argv[2];
 const s = readFileSync(file, "utf8");
@@ -18,8 +19,11 @@ const mustBeZero = [
   "#94b4dc",
   "#a0c8ff",
   "#7ea4df",
-  'AQUA_TOKEN_OVERRIDES = {',
 ];
+// NOTE: `AQUA_TOKEN_OVERRIDES = {` used to be in the list above, which could
+// never pass: build.mjs replaces the *object literal* and leaves the
+// declaration, so the text always survives. The table itself is guarded by
+// value further down ("token override table").
 const mustExist = [
   "--cl-coral",
   "--dsh-cglass-blur",
@@ -31,9 +35,11 @@ const mustExist = [
   "#d97757",
   "#faf9f5",
   "#181715",
-  "ui-claude-glass",
   "[data-dsh-compat] [role=listbox]",
 ];
+// NOTE: `ui-claude-glass` used to be in the list above. It is the *host* plugin
+// id and lives in cordis.patch.yml — never in client.js — so the check is now
+// done against that file, in the "ported host halves" section below.
 
 console.log("--- expected 0 ---");
 for (const n of mustBeZero) {
@@ -216,6 +222,228 @@ console.log(`  ${compatKeys} compat-mode surface key(s)`);
 if (compatKeys < 10) {
   console.log("  BAD  compat surface layer looks empty — the compat palette was not patched");
   guardFailures += 1;
+}
+
+// --- guard: the token override table must be Claude's, not aqua's ------------
+// `AQUA_TOKEN_OVERRIDES = {` cannot itself disappear: build.mjs replaces the
+// object *literal* and leaves the declaration, so a "must not appear" check on
+// that text can never pass. Assert on the literal instead — it has to be the
+// table parsed out of dsh-claude-theme/claude/skin.css.
+{
+  const at = s.indexOf("AQUA_TOKEN_OVERRIDES = ");
+  const brace = at < 0 ? -1 : s.indexOf("{", at);
+  let end = brace;
+  let depth = 0;
+  for (let i = brace; brace >= 0 && i < s.length; i += 1) {
+    if (s[i] === "{") depth += 1;
+    else if (s[i] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  const table = at < 0 || brace < 0 ? "" : s.slice(brace, end + 1);
+  const tokenKeys = (table.match(/"--dsw-[^"]+"/g) || []).length;
+  if (tokenKeys < 200) {
+    console.log(`  BAD  AQUA_TOKEN_OVERRIDES holds ${tokenKeys} --dsw-* token(s) — expected Claude's table (>= 200)`);
+    guardFailures += 1;
+  } else {
+    console.log(`  ok   AQUA_TOKEN_OVERRIDES holds Claude's ${tokenKeys} --dsw-* token overrides`);
+  }
+}
+
+// --- ported dsh-claude-theme plugins ----------------------------------------
+// glass ships dsh-claude-theme's five sidecar plugins *inside* its own bundle
+// (see tools/port-from-theme.mjs and src/port/). Nothing else would catch their
+// loss: the concatenation is anchored on `return module.exports;` and the mount
+// on `exports.inject = inject;`, so a bundle that lost either would still
+// build, still load, and simply do nothing.
+console.log("--- ported theme plugins ---");
+const PORTED = [
+  "brand.client.js",
+  "crab.client.js",
+  "font-switcher.client.js",
+  "lan-access.client.js",
+  "skin-egg.client.js",
+  "client-mount.js",
+];
+for (const f of PORTED) {
+  const c = count(`/* ===== src/port/${f} ===== */`);
+  if (c !== 1) {
+    console.log(`  BAD  ${f}: ${c} site(s)`);
+    guardFailures += 1;
+  } else {
+    console.log(`  ok   ${f}`);
+  }
+}
+{
+  // Each half is unwrapped, so the bundle must still hold exactly ONE module
+  // loader call: its own. A second one means a port was copied still wrapped.
+  const loaders = count("__ModuleLoader__");
+  if (loaders !== 1) {
+    console.log(`  BAD  ${loaders} __ModuleLoader__ call(s) — a ported half is still wrapped?`);
+    guardFailures += 1;
+  } else {
+    console.log("  ok   one module loader: every half was unwrapped");
+  }
+
+  // The mount has to happen inside the factory and before the module returns.
+  const mountAt = s.indexOf("applyPortedThemePlugins(ctx)");
+  const lastHalf = s.indexOf("/* ===== src/port/client-mount.js ===== */");
+  const returnAt = s.lastIndexOf("return module.exports;");
+  const wrapAt = s.indexOf("const clgGlassApply = exports.apply;");
+  for (const [what, at] of [["client-mount.js", lastHalf], ["the mount call", mountAt], ["the apply() wrapper", wrapAt]]) {
+    const ok = at > 0 && at < returnAt;
+    if (!ok) {
+      console.log(`  BAD  ${what} is missing, or sits outside the factory`);
+      guardFailures += 1;
+    }
+  }
+  if (mountAt > 0 && lastHalf > 0 && mountAt > lastHalf && returnAt > mountAt) {
+    console.log("  ok   mounted from apply(), inside the factory body");
+  }
+
+  // The egg is the release's headline feature: check its trigger and its two
+  // localStorage keys, and that it can actually reach the services it asks for.
+  const egg = [
+    ['var EGG_TRIGGER = "TZ=";', "the TZ= trigger"],
+    ["dsh-claude-skin.egg", "the cooldown stamp"],
+    ["dsh-claude-crab.prefs", "the shared mystery switch"],
+    ["conversation.input.left", "the watcher's slot"],
+    ["installFootprintHelper", "the console helper"],
+    ["installFootprintHelper()", "the helper being called"],
+  ];
+  for (const [n, label] of egg) {
+    const c = count(n);
+    if (c < 1) {
+      console.log(`  BAD  ${label}: not found`);
+      guardFailures += 1;
+    } else {
+      console.log(`  ok   ${label}`);
+    }
+  }
+
+  // The other four halves have to bring their own identity and UI with them.
+  const others = ["dsh-claude-brand", "dsh-claude-crab", "dsh-font-switcher", "dsh-lan-access"];
+  for (const n of others) {
+    const c = count(n);
+    if (c < 1) {
+      console.log(`  BAD  ${n}: not found`);
+      guardFailures += 1;
+    } else {
+      console.log(`  ok   ${n} (${c})`);
+    }
+  }
+
+  // The ported crab calls ctx.timeout from inside a ctx.effect, and the DSH
+  // client runtime only exposes ctx.timeout once the plugin declares the
+  // `timer` service. aqua's own inject list never had it — the port must.
+  if (!/const inject = \[[\s\S]{0,200}?"timer"/.test(s)) {
+    console.log("  BAD  the plugin never declares the client timer service — crab's ctx.timeout would throw");
+    guardFailures += 1;
+  } else {
+    console.log("  ok   the plugin declares the client timer service (crab)");
+  }
+
+  // The one rewrite, applied everywhere it was needed. Each ported file carries
+  // a `/* … Rewritten: ctx.get("slots") -> ctx.slots (1 site). … */` header, so
+  // the literal also appears in prose: count it in comment-stripped code only.
+  const code = s.replace(/\/\*[\s\S]*?\*\//g, "");
+  const leftover = code.split('ctx.get("slots")').length - 1;
+  if (leftover !== 0) {
+    console.log(`  BAD  ${leftover} ctx.get("slots") left — the rewrite missed a port`);
+    guardFailures += 1;
+  } else {
+    console.log('  ok   no ctx.get("slots") left outside the port headers');
+  }
+}
+
+// --- ported host halves ------------------------------------------------------
+// lib/index.js is the base's index.js with its `export { apply };` replaced by
+// src/port/host-mount.js: that fragment imports the two ported host halves and
+// re-exports the wrapped apply. The client half would still work without any of
+// this — LAN access and the font files would simply never come up.
+const indexFile = join(dirname(file), "index.js");
+console.log("--- ported host halves (lib/index.js) ---");
+if (!existsSync(indexFile)) {
+  console.log("  (skipped: " + indexFile + " does not exist)");
+} else {
+  const idx = readFileSync(indexFile, "utf8");
+  const iany = (n) => idx.split(n).length - 1;
+  const hostChecks = [
+    ['from "./lan-access.js"', "imports the LAN host half"],
+    ['from "./font-switcher.js"', "imports the font host half"],
+    ["export { applyWithPortedPlugins as apply };", "re-exports the wrapped apply"],
+    ["clgBaseApply(ctx)", "still runs the base's settings registration"],
+    ['clgHostMount(ctx, "dsh-lan-access", ["connection", "webServer"]', "mounts LAN with its services"],
+    ['clgHostMount(ctx, "dsh-font-switcher", ["connection"]', "mounts fonts with its services"],
+  ];
+  for (const [n, label] of hostChecks) {
+    const c = iany(n);
+    if (c !== 1) {
+      console.log(`  BAD  ${label}: ${c} site(s)`);
+      guardFailures += 1;
+    } else {
+      console.log(`  ok   ${label}`);
+    }
+  }
+  // src/port/host-mount.js explains the splice in a block comment that quotes
+  // the base's own `export { apply };`, so look at the code, not the prose.
+  const idxCode = idx.replace(/\/\*[\s\S]*?\*\//g, "");
+  if (idxCode.includes("export { apply };")) {
+    console.log("  BAD  the base still exports the unwrapped apply");
+    guardFailures += 1;
+  } else {
+    console.log("  ok   the base's export { apply }; is gone (only the wrapper is exported)");
+  }
+  for (const f of ["lan-access.js", "qr.js", "font-switcher.js"]) {
+    const p = join(dirname(file), f);
+    if (!existsSync(p)) {
+      console.log(`  BAD  lib/${f} was not emitted`);
+      guardFailures += 1;
+    } else {
+      console.log(`  ok   lib/${f} (${readFileSync(p, "utf8").length} bytes)`);
+    }
+  }
+  // lan-access imports the QR encoder by relative path: both files have to sit
+  // in the same directory for that to resolve.
+  const lan = readFileSync(join(dirname(file), "lan-access.js"), "utf8");
+  if (!lan.includes('from "./qr.js"') || !lan.includes("export function apply(ctx)")) {
+    console.log("  BAD  lib/lan-access.js does not import ./qr.js, or lost its apply()");
+    guardFailures += 1;
+  } else {
+    console.log("  ok   lan-access.js -> ./qr.js resolves inside lib/");
+  }
+
+  // The host plugin's identity and the client services its ported halves need.
+  // cordis.patch.yml is where `ui-claude-glass` actually lives (it is a plugin
+  // id, not a string in the client bundle), and the three services the ported
+  // halves declared for themselves upstream have to be in the inject array or
+  // the client half never gets renderer/conversation/sidebar.
+  const distRoot = dirname(dirname(file));
+  const patch = readFileSync(join(distRoot, "cordis.patch.yml"), "utf8");
+  if (!patch.includes("id: ui-claude-glass") || !patch.includes("name: 'dsh-claude-glass'")) {
+    console.log("  BAD  cordis.patch.yml does not insert ui-claude-glass / dsh-claude-glass");
+    guardFailures += 1;
+  } else {
+    console.log("  ok   cordis.patch.yml inserts ui-claude-glass / dsh-claude-glass");
+  }
+  const pkg = JSON.parse(readFileSync(join(distRoot, "package.json"), "utf8"));
+  const inject = (pkg.dsh && pkg.dsh.client && pkg.dsh.client.inject) || [];
+  const need = [
+    "@deepseek-ai/dsh-client-ui-renderer",
+    "@deepseek-ai/dsh-client-ui-conversation",
+    "@deepseek-ai/dsh-client-ui-sidebar",
+  ];
+  const missing = need.filter((n) => !inject.includes(n));
+  if (missing.length) {
+    console.log(`  BAD  package.json dsh.client.inject is missing ${missing.join(", ")}`);
+    guardFailures += 1;
+  } else {
+    console.log(`  ok   package.json dsh.client.inject carries the ported halves' ${need.length} extra services`);
+  }
 }
 
 if (guardFailures > 0) {
