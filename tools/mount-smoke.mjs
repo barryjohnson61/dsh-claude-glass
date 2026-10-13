@@ -147,6 +147,14 @@ const react = {
   version: "18.2.0-test",
 };
 react.default = react;
+// The automatic JSX runtime is a separate module specifier; aqua's settings rows
+// are compiled against it, so hand back the two function names they call.
+const jsxRuntime = {
+  jsx: (type, props) => ({ type, props: props ?? {}, children: [] }),
+  jsxs: (type, props) => ({ type, props: props ?? {}, children: [] }),
+  jsxDEV: (type, props) => ({ type, props: props ?? {}, children: [] }),
+  Fragment: "Fragment",
+};
 const reactDom = { createPortal: (n) => n, render: () => {}, flushSync: (f) => f && f(), version: "18.2.0-test" };
 reactDom.default = reactDom;
 
@@ -155,7 +163,13 @@ reactDom.default = reactDom;
 // permissive stub — enough for module-level destructuring, never rendered.
 const anyStub = new Proxy(function () {}, {
   get(_t, key) {
-    if (typeof key === "symbol") return key === Symbol.iterator ? () => [] : undefined;
+    if (typeof key === "symbol") {
+      if (key === Symbol.iterator) return () => [];
+      // Without a primitive hint, `${someStub}` throws "Cannot convert object
+      // to primitive value" — a harness artefact, not a product bug.
+      if (key === Symbol.toPrimitive) return () => "[stub]";
+      return undefined;
+    }
     if (key === "__esModule") return true;
     if (key === "default") return anyStub;
     if (key === "toString") return () => "";
@@ -166,7 +180,8 @@ const anyStub = new Proxy(function () {}, {
 });
 const requiredDshPackages = new Set();
 const requireShim = (name) => {
-  if (name === "react" || name === "react/jsx-runtime" || name === "react/jsx-dev-runtime") return react;
+  if (name === "react") return react;
+  if (name === "react/jsx-runtime" || name === "react/jsx-dev-runtime") return jsxRuntime;
   if (name === "react-dom" || name === "react-dom/client") return reactDom;
   if (name.startsWith("@deepseek-ai/")) {
     requiredDshPackages.add(name);
@@ -191,7 +206,7 @@ else {
   if (spec.id !== "dsh-claude-glass") fail(`the plugin row id is ${spec.id}, expected dsh-claude-glass`);
 }
 
-const seen = { effects: [], injects: [], slots: [], registrations: [], timeouts: 0, notes: [] };
+const seen = { effects: [], injects: [], slots: [], registrations: [], components: [], timeouts: 0, notes: [] };
 const note = (kind, label, error) => {
   const line = `${kind}: "${label ?? "?"}" -> ${String(error.message).split("\n")[0].slice(0, 90)}`;
   if (kind === "effect") seen.notes.push(line);
@@ -203,9 +218,13 @@ const slots = {
     if (typeof a === "function") a();
     else if (a && typeof a === "object") seen.registrations.push(`${a.name ?? name}${a.id ? "#" + a.id : ""}`);
   },
-  register(a) {
-    if (a && typeof a === "object") seen.registrations.push(`${a.name}${a.id ? "#" + a.id : ""}`);
-    else if (typeof a === "string") seen.registrations.push(a);
+  register(a, b) {
+    const desc = `${typeof a === "string" ? a : (a?.name ?? "?")}${a?.id ? "#" + a.id : ""}`;
+    seen.registrations.push(desc);
+    // `register(descriptor, Component)` — the second argument is the seat. Keep
+    // it so the render pass below can prove it does not throw on first render.
+    const component = typeof a === "function" ? a : b;
+    if (typeof component === "function") seen.components.push({ desc, comp: component });
     return () => {};
   },
   get: () => undefined, list: () => [], unregister: () => {},
@@ -292,6 +311,46 @@ if (exports$ && typeof exports$ === "object") {
   ]) {
     if (!seen.registrations.includes(want)) fail(`nothing registered ${want} — that ported plugin did not mount`);
   }
+
+  /*
+   * Every seat the ports registered is a React component, so render each one
+   * once with a permissive props stand-in. A component that throws on its first
+   * render is a broken seat: upstream's egg slice arrived without its `React`
+   * binding and threw `React is not defined` on every keystroke — in the real
+   * client that took the composer's input area down with it, and no static
+   * check could see it, because nothing here ever rendered a component. Gaps in
+   * the browser globals Node lacks are reported, never failed.
+   */
+  const BROWSER_ONLY =
+    /NodeFilter|IntersectionObserver|ResizeObserver|MutationObserver|requestAnimationFrame|matchMedia|getComputedStyle|createImageBitmap|document is not defined/;
+  const permissive = (label) =>
+    new Proxy(function () {}, {
+      get: (_t, k) => {
+        if (typeof k === "symbol") return k === Symbol.toPrimitive ? () => "[stub]" : undefined;
+        // Interpolating or comparing a stubbed prop must not throw
+        // "Cannot convert object to primitive value".
+        if (k === "toString" || k === "valueOf") return () => "[stub]";
+        return permissive(`${label}.${String(k)}`);
+      },
+      apply: () => permissive(`${label}()`),
+      construct: () => permissive(label),
+    });
+  const compProps = new Proxy(
+    { useInput: (sel) => sel({ draft: "" }), inputActions: { setDraft() {} } },
+    { get: (t, k) => (k in t ? t[k] : permissive(String(k))) },
+  );
+  let rendered = 0;
+  for (const entry of seen.components) {
+    try {
+      entry.comp(compProps);
+      rendered += 1;
+    } catch (error) {
+      const message = String(error?.message ?? error);
+      if (BROWSER_ONLY.test(message)) say(`  (needs a real browser) render "${entry.desc}" -> ${message}`);
+      else fail(`render "${entry.desc}" threw on first render: ${message}`);
+    }
+  }
+  say(`  components rendered   : ${rendered}/${seen.components.length}`);
   if (seen.effects.length === 0) fail("apply(ctx) registered no effects at all");
 }
 

@@ -117,8 +117,36 @@ function learnProfile(ctx) {
       managedPatchPath = join(fact.dir, "cordis.patch.yml");
     }
   } catch {
-    /* no profile fact on this host: keep the environment fallback */
+    /* no profile fact on this host: try the command line below */
   }
+  if (managedPatchPath === null) managedPatchPath = launchedProfilePatch();
+  if (managedPatchPath === null) {
+    console.warn(
+      "[dsh-lan-access] the Host published no profileContext fact and no profile " +
+        "directory is on the command line; falling back to " + patchFile(),
+    );
+  }
+}
+
+/**
+ * The desktop host is handed its profile directory as a command-line argument
+ * (`…/dsh-desktop-host/lib/index.js <asar> <profile> …`). That is the last resort
+ * for a host that publishes no `profileContext`; without it the switch would
+ * edit `profiles/web`, a directory that need not exist -- which is exactly the
+ * failure this whole rewrite exists to prevent. Only paths that already sit
+ * under `$DSH_HOME/profiles/` and already hold a patch file are accepted.
+ */
+function launchedProfilePatch() {
+  const root = join(dshHome(), "profiles").replace(/[\\/]+$/, "").toLowerCase();
+  for (const arg of process.argv) {
+    if (typeof arg !== "string") continue;
+    const dir = arg.replace(/[\\/]+$/, "");
+    const lower = dir.toLowerCase();
+    if (lower.indexOf(root + "\\") !== 0 && lower.indexOf(root + "/") !== 0) continue;
+    const candidate = join(dir, "cordis.patch.yml");
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 /**

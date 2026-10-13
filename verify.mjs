@@ -337,6 +337,32 @@ for (const f of PORTED) {
     }
   }
 
+  /*
+   * A ported half is an IIFE cut out of a module factory, so every free
+   * identifier it uses has to be bound inside it. Upstream's factory declares
+   * `var React = require("react")` near its top, but the egg slice starts
+   * hundreds of lines later and arrived without it — `React is not defined` on
+   * every render of that slot entry, and a crashing component takes the whole
+   * composer input down. Check the binding per section, not per file.
+   */
+  const sectionMarker = /\/\* ===== src\/port\/([\w.-]+) ===== \*\//g;
+  const sections = [...s.matchAll(sectionMarker)];
+  let boundOk = 0;
+  for (let i = 0; i < sections.length; i++) {
+    const name = sections[i][1];
+    const body = s.slice(sections[i].index, i + 1 < sections.length ? sections[i + 1].index : s.length);
+    const unbound = [];
+    if (/\bReact\./.test(body) && !body.includes('require("react")')) unbound.push("React");
+    if (/(?<![A-Za-z0-9_$.])h\(/.test(body) && !body.includes("var h = ")) unbound.push("h");
+    if (unbound.length > 0) {
+      console.log(`  BAD  src/port/${name} uses ${unbound.join(" and ")} without binding it — that seat throws on render`);
+      guardFailures += 1;
+    } else {
+      boundOk += 1;
+    }
+  }
+  console.log(`  ok   every ported half binds the identifiers it uses (${boundOk}/${sections.length} checked)`);
+
   // The ported crab calls ctx.timeout from inside a ctx.effect, and the DSH
   // client runtime only exposes ctx.timeout once the plugin declares the
   // `timer` service. aqua's own inject list never had it — the port must.

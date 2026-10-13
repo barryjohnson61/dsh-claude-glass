@@ -89,12 +89,18 @@
 
 ```powershell
 # 1) 放进 profile 的 vendor 目录
-copy dsh-claude-glass-1.0.0.tgz "$env:USERPROFILE\.dsh\profiles\desktop\vendor\"
+copy dsh-claude-glass-1.1.0.tgz "$env:USERPROFILE\.dsh\profiles\desktop\vendor\"
 
 # 2) 解包到 node_modules
-tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.0.0.tgz" `
+tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.1.0.tgz" `
     -C "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-claude-glass" --strip-components=1
 ```
+
+> **升级时注意**：`file:` 依赖在 lockfile 里按**文件名**记住完整性，所以同名 tarball 内容变了
+> （版本号没变的那种重新打包）`pnpm install` 会直接说 `Already up to date` 而不解包；如果先把旧的
+> `node_modules\dsh-claude-glass` 删掉再装，它也不会补回来。可靠做法就是上面第 2 步的 `tar`，
+> 然后把 `pnpm-lock.yaml` 里 `dsh-claude-glass@file:vendor/…tgz` 那条的 `integrity` 换成新 tarball 的
+> （`sha512-` + base64 的 SHA-512），这样后续 `pnpm install` 才是干净的空操作。
 
 然后编辑 `%USERPROFILE%\.dsh\profiles\desktop\package.json`：
 
@@ -102,7 +108,7 @@ tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.0.0.t
 {
   "dependencies": {
     // 原来是 dsh-client-ui-aqua，换成这一行
-    "dsh-claude-glass": "file:vendor\\dsh-claude-glass-1.0.0.tgz"
+    "dsh-claude-glass": "file:vendor\\dsh-claude-glass-1.1.0.tgz"
   },
   "dsh": {
     "profile": {
@@ -161,7 +167,7 @@ node build.mjs
 ```powershell
 node build.mjs                                            # 任何锚点失配都会以非零退出码 + BUILD PROBLEMS 中止
 node verify.mjs dist/dsh-claude-glass/lib/client.js       # 必须带路径参数
-node tools\mount-smoke.mjs                                # 动态挂载冒烟（见 §5.2）
+node tools\mount-smoke.mjs                                # 动态挂载冒烟（见 §5.5）
 node pack.mjs                                             # 出 tgz（pnpm 优先，退回 npm）
 node pack.mjs --dest "$env:USERPROFILE\.dsh\profiles\desktop\vendor"   # 顺带投递到 profile
 ```
@@ -420,6 +426,21 @@ node tools\mount-smoke.mjs            # 或 npm run smoke；默认检查 dist/ds
 `sidebar.footer.action#claude-profile`、`conversation.input.left#claude-fingerprint`、品牌三处 slot）、
 crab 是否真的走到 `ctx.timeout`，以及宿主半边的六条路由是否注册。
 
+其中最重要的一项是**把每个注册的条目渲染一次**：它记下每次
+`slots.register(descriptor, Component)` 拿到的组件，用宽松的 props/服务替身各渲染一次。
+理由很实在 —— 移植的彩蛋段一开始没有带 `React` 绑定，`React is not defined` 让
+`conversation.input.left` 这个条目一渲染就抛，而它就挂在输入区内部，于是**整个输入框消失**
+（用户实机报的就是这个）。静态检查看字面量，什么也看不出来；渲染一次就立刻红。
+`verify.mjs` 里另有一条对应的静态守卫（每个移植段必须自带它用到的绑定），两条守卫都用
+“故意破坏的产物”验证过会失败：
+
+```powershell
+node tools\break-render-binding.cjs dist\dsh-claude-glass\lib\client.js   # 删掉彩蛋段的 React 绑定
+node verify.mjs "dist\dsh-claude-glass\lib\client.js"                     # BAD … exit 1
+node tools\mount-smoke.mjs                                                # FAIL render … exit 1
+node build.mjs --base … --claude …                                        # 重建即恢复全绿
+```
+
 两点须知：它是**替身环境**，不是浏览器 —— 没有真 DOM，所以个别只为真浏览器而写的 effect
 会被标成 `(needs a real browser)` 而不是失败；它证明的是**接线**，界面观感仍以 §2.1 的
 GUI 清单为准。
@@ -445,6 +466,7 @@ dsh-claude-glass/
 ├─ tools/
 │  ├─ port-from-theme.mjs    §5.4 的再移植生成器（重跑即跟进上游）
 │  ├─ mount-smoke.mjs        §5.5 的动态挂载冒烟（替身 ctx/DOM 真执行产物）
+│  ├─ break-render-binding.cjs §5.5 的“负面测试”：故意删掉绑定，证明守卫会红
 │  └─ toggle-repro/          §5.1 侧栏包含块缺陷的真 Electron 台架（真核心 CSS）
 │     ├─ main.js             `electron main.js <bundleA> <bundleB>`，输出 JSON 对照
 │     ├─ core-layout-css.txt 从 dsh-client-ui-layout 抽出的核心 CSS

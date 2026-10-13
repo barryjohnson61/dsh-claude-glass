@@ -114,6 +114,8 @@ react                                  ^18.2.0
   ——这就是上面那条实机 bug 的回归守卫。
 - 动态校验也**不能**证明彩蛋在真实输入框里触发、二维码能扫、螃蟹能挂上；
   这些仍需在 GUI 里实机确认（见 README §2.1 的验收清单）。
+- `verify.mjs` 与 `tools/mount-smoke.mjs` 各自增加了一条“渲染安全”守卫（移植段必须自带 `React`
+  绑定；每个注册的组件都要能渲染一次），两条都用“故意破坏的构建产物”验证过确实会失败（见下）。
 
 ### 修复：局域网开关写错 profile（实机发现）
 
@@ -133,14 +135,46 @@ DSH 桌面端启动的是 `desktop` profile，但**不导出** `DSH_PROFILE`，�
 `resolveManagedProfile()`，注释里把原因写得很清楚。）
 
 修复：宿主会把启动的 profile 发布在 `profileContext` 服务上（`{ name, dir, patchPath, … }`），
-移植版优先取其 `patchPath`（退化用 `dir` + `cordis.patch.yml`），环境变量只作为没有该服务时的
-回退。路径在 `apply()` 开头由 `learnProfile(ctx)` 记一次 —— 导出的辅助函数是从路由回调里调的，
-拿不到 `ctx`。这是移植时的**有意偏离**，写在 `src/port/lan-access.js` 文件头与
-`PORT-MANIFEST.md` 里；生成器的漂移断言会让上游一旦改动这段代码就报错，而不是静默失效。
+移植版优先取其 `patchPath`（退化用 `dir` + `cordis.patch.yml`）；若连这个服务也拿不到
+（`ctx.get("profileContext")` 返回假值），回退到**启动参数**里那个 `…/profiles/<名字>` 目录
+（栈里只有 `$DSH_HOME/profiles/` 下、且带 `cordis.patch.yml` 的路径才会被采纳，避免写错 profile）；
+环境变量 `DSH_PROFILE` 只作为最后的回退，且回退发生时会在控制台留下一条
+`[dsh-lan-access] the Host published no profileContext fact…` 警告。路径在 `apply()` 开头由
+`learnProfile(ctx)` 记一次 —— 导出的辅助函数是从路由回调里调的，拿不到 `ctx`。这是移植时的
+**有意偏离**，写在 `src/port/lan-access.js` 文件头与 `PORT-MANIFEST.md` 里；生成器的漂移断言会让
+上游一旦改动这段代码就报错，而不是静默失效。
+
+### 修复：彩蛋半边缺 `React` 绑定（实机发现，致命）
+
+上游 `plugins/skin/lib/client.js` 里，`var React = require("react"); var h = React.createElement;`
+在模块工厂的顶部，而彩蛋的实现段（`var EGG_STORE = …` 到 `function apply(ctx)`）在几百行之后。
+移植只切了彩蛋那一连续段，于是这段代码**没有任何绑定**：
+
+```
+ReferenceError: React is not defined
+    at FootprintWatcher (…/lib/client.js:8667:…)
+```
+
+后果不是“彩蛋失效”，而是**输入框整块消失**：`conversation.input.left` 是在输入区内部渲染的，
+条目渲染时抛错会把整棵 composer 子树带走（用户实机报告：“输入框完全没反应”）。
+
+修复两层：
+
+- `tools/port-from-theme.mjs` 在拼 `skin-egg.client.js` 时补上工厂顶部那两行 `React` / `h` 绑定，
+  并断言这一节里一旦出现 `React.` 就必须有 `require("react")`。
+- `verify.mjs` 增加**按节**的绑定检查：把 bundle 按 `/* ===== src/port/<文件> ===== */` 切开，
+  每一节若用到 `React.` 或 `h(` 就必须自己绑定（6/6 通过）。
+- `tools/mount-smoke.mjs` 增加**渲染**检查：记录每次 `slots.register(descriptor, Component)` 的组件，
+  再用宽松的 props/服务替身把每一个都渲染一次 —— 这是唯一能抓到“条目一渲染就抛”的静态手段。
+  它同时被验证过：故意从构建产物里删掉那段 `React` 绑定时，verify 报
+  `BAD src/port/skin-egg.client.js uses React without binding it`，冒烟报
+  `FAIL render "conversation.input.left#claude-fingerprint" threw on first render: React is not defined`
+  （两者都以 1 退出），随后重建即恢复全绿。
 
 ### 打包
 
-`dist/dsh-claude-glass/dsh-claude-glass-1.1.0.tgz`（535912 B，26 个条目）。
+`dist/dsh-claude-glass/dsh-claude-glass-1.1.0.tgz`（26 个条目，约 545 KB；`tools/` 不进包，
+它们只在源码仓库里）。
 
 ---
 

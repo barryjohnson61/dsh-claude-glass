@@ -16,6 +16,9 @@ const portSkinEgg = (function () {
 		var module = { exports: {} };
 		var exports = module.exports;
 
+		var React = require("react");
+		var h = React.createElement;
+
 		var EGG_STORE = "dsh-claude-skin.egg";        /* cooldown stamp */
 		var EGG_SWITCH_KEY = "dsh-claude-crab.prefs"; /* the shared switch */
 		var EGG_SWITCH_FIELD = "mystery";

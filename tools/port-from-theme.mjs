@@ -292,9 +292,19 @@ function portSkinEgg() {
     `\nconst portSkinEgg = (function () {\n` +
     `\t\tvar module = { exports: {} };\n` +
     `\t\tvar exports = module.exports;\n\n` +
+    /* Upstream's factory body declares React near its top; the slice below
+     * starts hundreds of lines later, so the subset arrives without it. Bind it
+     * here: `FootprintWatcher` renders `React.useRef`/`React.useEffect`, and an
+     * unbound React makes the slot entry throw on every render — which in the
+     * real client knocks out the composer's input area, not just the egg. */
+    `\t\tvar React = require("react");\n` +
+    `\t\tvar h = React.createElement;\n\n` +
     subset +
     SKIN_EGG_APPLY +
     `})();\n`;
+  if (/\bReact\./.test(subset) && !out.includes('require("react")')) {
+    problems.push(`${label}: the subset uses React but nothing binds it`);
+  }
   writeFileSync(join(OUT, `${label}.client.js`), out, "utf8");
   manifest.push([`${label}.client.js`, rel, text, Buffer.byteLength(out, "utf8")]);
 }
@@ -376,8 +386,36 @@ function learnProfile(ctx) {
       managedPatchPath = join(fact.dir, "cordis.patch.yml");
     }
   } catch {
-    /* no profile fact on this host: keep the environment fallback */
+    /* no profile fact on this host: try the command line below */
   }
+  if (managedPatchPath === null) managedPatchPath = launchedProfilePatch();
+  if (managedPatchPath === null) {
+    console.warn(
+      "[dsh-lan-access] the Host published no profileContext fact and no profile " +
+        "directory is on the command line; falling back to " + patchFile(),
+    );
+  }
+}
+
+/**
+ * The desktop host is handed its profile directory as a command-line argument
+ * (\`…/dsh-desktop-host/lib/index.js <asar> <profile> …\`). That is the last resort
+ * for a host that publishes no \`profileContext\`; without it the switch would
+ * edit \`profiles/web\`, a directory that need not exist -- which is exactly the
+ * failure this whole rewrite exists to prevent. Only paths that already sit
+ * under \`$DSH_HOME/profiles/\` and already hold a patch file are accepted.
+ */
+function launchedProfilePatch() {
+  const root = join(dshHome(), "profiles").replace(/[\\\\/]+$/, "").toLowerCase();
+  for (const arg of process.argv) {
+    if (typeof arg !== "string") continue;
+    const dir = arg.replace(/[\\\\/]+$/, "");
+    const lower = dir.toLowerCase();
+    if (lower.indexOf(root + "\\\\") !== 0 && lower.indexOf(root + "/") !== 0) continue;
+    const candidate = join(dir, "cordis.patch.yml");
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }`;
 
 const LAN_APPLY_ANCHOR = `export function apply(ctx) {`;
