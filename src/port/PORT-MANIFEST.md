@@ -12,7 +12,7 @@ re-run the script against a newer theme checkout and review the diff.
 | `crab.client.js` | `crab-plugin/lib/client.js` | `sha256:f6ede62b2b6b1444` | 116462 |
 | `font-switcher.client.js` | `plugins/font-switcher/lib/client.js` | `sha256:1030cbf690b65bff` | 19415 |
 | `lan-access.client.js` | `plugins/lan-access/lib/client.js` | `sha256:0bd9e852e424ed04` | 15316 |
-| `skin-egg.client.js` | `plugins/skin/lib/client.js` | `sha256:5932d92b3e840246` | 20460 |
+| `skin-egg.client.js` | `plugins/skin/lib/client.js` | `sha256:5932d92b3e840246` | 21052 |
 | `lan-access.js` | `plugins/lan-access/lib/index.js` | `sha256:afdbe26ee855edb5` | 15205 |
 | `qr.js` | `plugins/lan-access/lib/qr.js` | `sha256:e36c3030f253135d` | 15838 |
 | `font-switcher.js` | `plugins/font-switcher/lib/index.js` | `sha256:b961941dd4f0ef4d` | 16366 |

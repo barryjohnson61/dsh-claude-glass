@@ -456,8 +456,22 @@ const SKIN_WATCHER_NOTE =
   `           (\`props.keyboard\`, the session input facade: subscribe to its\n` +
   `           published input state, write through \`actions.setDraft\`). This DSH\n` +
   `           hands input slots no \`useInput\`/\`inputActions\` pair, so upstream's\n` +
-  `           \`props.useInput(...)\` threw on the first render and the egg never\n` +
-  `           fired.`;
+  `           \`props.useInput(...)\` threw on the first render.`;
+
+/**
+ * The egg is NOT a working feature here — the slice above is kept for posterity
+ * only. Read this note before "fixing" the watcher: the rewrite it describes is
+ * already in place and the live client still never fires the egg.
+ */
+const SKIN_EGG_INERT_NOTE =
+  `NOT PORTED in 1.1.0 — the egg never fires in the live client, even with the\n` +
+  `           rewrite above: this DSH does not hand this seat the composer draft\n` +
+  `           in the shape the facade assumes. The code is kept verbatim for\n` +
+  `           whoever wires it up later; the CHANGELOG entry\n` +
+  `           "未移植：请求指纹彩蛋（代码保留，等后人实现）" records what was tried,\n` +
+  `           what this seat actually gets, and where the real draft state lives\n` +
+  `           (the composer's own input view / Lexical layer).\n` +
+  `           \`window.__claudeFootprint.show()\` still opens the panel by hand.`;
 
 function portSkinEgg() {
   const rel = "plugins/skin/lib/client.js";
@@ -509,7 +523,8 @@ function portSkinEgg() {
         `Dropped: the skin stylesheet (STYLE_ID/CSS) and the "Claude-X" settings\n` +
         `         page — glass owns both. Glass's own apply() is appended below.\n` +
         REWRITE_NOTE + "\n" +
-        SKIN_WATCHER_NOTE,
+        SKIN_WATCHER_NOTE + "\n" +
+        SKIN_EGG_INERT_NOTE,
     ) +
     `\nconst portSkinEgg = (function () {\n` +
     `\t\tvar module = { exports: {} };\n` +

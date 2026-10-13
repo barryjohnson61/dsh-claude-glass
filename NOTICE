@@ -40,7 +40,9 @@ code of its own beyond the integration layer described in README.md.
                             base64-inlined into fonts.module.css
     sidecar plugins      -> (added in 1.1.0) the theme repository's five plugins,
                             vendored into src/port/: plugins/skin/lib/client.js
-                            (the `TZ=` request-fingerprint easter egg),
+                            (the `TZ=` request-fingerprint easter egg — shipped
+                            inert: the code is kept, the live trigger is
+                            unresolved; see the CHANGELOG "not ported" entry),
                             plugins/lan-access/ (host routes + client panel + the
                             hand-written byte-mode QR encoder), brand-plugin/,
                             crab-plugin/, plugins/font-switcher/. Taken from

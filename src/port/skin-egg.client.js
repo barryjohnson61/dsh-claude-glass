@@ -14,8 +14,15 @@
  *            (`props.keyboard`, the session input facade: subscribe to its
  *            published input state, write through `actions.setDraft`). This DSH
  *            hands input slots no `useInput`/`inputActions` pair, so upstream's
- *            `props.useInput(...)` threw on the first render and the egg never
- *            fired.
+ *            `props.useInput(...)` threw on the first render.
+ * NOT PORTED in 1.1.0 — the egg never fires in the live client, even with the
+ *            rewrite above: this DSH does not hand this seat the composer draft
+ *            in the shape the facade assumes. The code is kept verbatim for
+ *            whoever wires it up later; the CHANGELOG entry
+ *            "未移植：请求指纹彩蛋（代码保留，等后人实现）" records what was tried,
+ *            what this seat actually gets, and where the real draft state lives
+ *            (the composer's own input view / Lexical layer).
+ *            `window.__claudeFootprint.show()` still opens the panel by hand.
  */
 
 const portSkinEgg = (function () {

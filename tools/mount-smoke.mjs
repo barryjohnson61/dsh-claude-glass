@@ -427,10 +427,13 @@ if (exports$ && typeof exports$ === "object") {
   say(`  require() seen        : ${[...requiredModules].join(" | ") || "(none)"}`);
 
   /*
-   * Behavioural test 1 — the request-fingerprint egg. A bare `TZ=` in the
-   * composer must open the scrim and rewrite the draft to `TZ=Asia/Shanghai`.
-   * A bare render can never show that: the watcher reads the draft through its
-   * props and reacts in an effect, so drive it the way the shell does — hand it
+   * Behavioural test 1 — the request-fingerprint egg's PLUMBING. The egg does
+   * not fire in the live app (it ships inert and is treated as not-ported — see
+   * CHANGELOG), because the real composer never hands this seat the draft.
+   * What this test still guards is the wiring: given a draft published on the
+   * seat's input facade, the watcher must rewrite it to `TZ=Asia/Shanghai` and
+   * mount its scrim on document.body. A bare render can never show that — the
+   * watcher reacts in an effect — so drive it the way the shell does: hand it
    * the session input facade, mount, publish a draft, notify, render again.
    */
   const eggSeat = seen.components.find((e) => e.desc === "conversation.input.left#claude-fingerprint");
@@ -465,7 +468,8 @@ if (exports$ && typeof exports$ === "object") {
       } else if (scrim === undefined) {
         fail("the egg rewrote the draft but mounted no scrim on document.body");
       } else {
-        say('  ok   a bare "TZ=" fires the egg: draft -> "TZ=Asia/Shanghai", scrim mounted on document.body');
+        say('  ok   the egg wiring holds: a "TZ=" draft -> "TZ=Asia/Shanghai", scrim mounted on document.body');
+        say('       (harness only — the egg ships inert in the live app; see CHANGELOG)');
       }
     } catch (error) {
       fail(`driving the egg watcher threw: ${String(error?.message ?? error)}`);

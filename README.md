@@ -16,7 +16,7 @@
 | --- | --- |
 | **dsh-claude-theme** | 278 个 `--dsw-*` 颜色令牌（`#faf9f5` 画布 / `#d97757` 珊瑚 / `#181715` 暖黑深色）、完整排版阶梯、`--cl-*` 调色板钩子、圆角阶梯（8 / 12 / 16 / 26）、`claude.ai` 的卡片语言 |
 | **dsh-client-ui-aqua** | 流体着色器背景、玻璃/云母材质、小鱼与气泡等环境装饰、鼠标辉光、悬停下压、入场动画、壁纸（图/视频）层、完整的设置界面 |
-| **dsh-claude-theme 的插件套件**（1.1.0 起） | 请求指纹彩蛋、局域网访问（含手写 QR 编码器）、品牌替换、Clawd 螃蟹挂件、字体切换 —— 见 §2.1 |
+| **dsh-claude-theme 的插件套件**（1.1.0 起） | 请求指纹彩蛋（⚠️ 代码入库但**实机不触发**，按未移植处理）、局域网访问（含手写 QR 编码器）、品牌替换、Clawd 螃蟹挂件、字体切换 —— 见 §2.1 |
 
 字体也从 claude-theme 原样搬来（四份 woff2 以 base64 内联进 bundle）：
 **Newsreader** 衬线正文 / **Inter** 界面外壳 / **JetBrains Mono** 代码。
@@ -57,11 +57,13 @@
 ### 2.1 移植自 dsh-claude-theme 的插件功能（1.1.0 新增）
 
 上游把皮肤之外的实用功能都做成了**独立插件**；glass 把其中 5 个整体搬进来，
-内联进同一个 `lib/client.js`（外部依赖为零，不新增任何 npm 包）：
+内联进同一个 `lib/client.js`（外部依赖为零，不新增任何 npm 包）。其中 4 个实机可用；
+**请求指纹彩蛋只入库、未生效** —— 按「未移植」处理，代码保留、等后人接上触发链路
+（CHANGELOG「未移植：请求指纹彩蛋」）。
 
 | 功能 | 怎么用 | 依赖的宿主服务 |
 | --- | --- | --- |
-| **请求指纹彩蛋** | 在输入框里打出**裸** `TZ=`（不带参数）→ 弹出「请求指纹」面板：系统真实时区、按该时区格式化的日期、16×12 点阵螃蟹；确认后草稿被替换成 `TZ=Asia/Shanghai`。7 天冷却；`window.__claudeFootprint` 可 `.record()/.stop()/.reset()/.show()` 手动调试 | 无（纯客户端） |
+| **请求指纹彩蛋** ⚠️ **未生效（按未移植处理）** | 代码在、`window.__claudeFootprint` 也在，但在输入框里打裸 `TZ=` **不会**弹面板：这一版 DSH 不把这个座位的草稿交给它。想手动看面板用 `window.__claudeFootprint.show()`。缺什么、从哪接，见 CHANGELOG 同名条目 | 无（纯客户端） |
 | **局域网访问** | 侧栏底部「手机访问」图标 → 面板显示本机 LAN 地址、端口、二维码与绑定开关（面板经 `react-dom` 的 portal 渲染到 `document.body`，不留在侧栏的包含块里） | `connection` + `webServer` |
 | **品牌替换** | 星形标记替换官方品牌位，同时改 `document.title` 与 favicon；偏好存 `localStorage: dsh-claude-brand.prefs` | 无 |
 | **Clawd 螃蟹挂件** | 直接落在输入框卡片（`[data-composer-card]`）上的像素螃蟹，设置页 id `clawd` | `timer`（客户端） |
@@ -69,9 +71,10 @@
 
 **验收清单（静态校验查不到，必须在 GUI 里实机确认）**：
 
-1. 输入框打 `TZ=` → 面板出现，日期与系统时区一致，确认后草稿变成 `TZ=Asia/Shanghai`；
-   再打一次不会立刻重复弹出（冷却）。草稿是从输入区自己的 facade（`props.keyboard` 发布的输入状态）
-   订阅来的 —— 这一版 DSH 不把 `useInput`/`inputActions` 交给输入槽位。
+1. **彩蛋不生效是已知状态，不用验、也别当 bug 报**（按「未移植」处理、代码保留）：输入框里打裸
+   `TZ=` 不会有反应，这是预期。要确认代码确实加载了，看控制台
+   `typeof window.__claudeFootprint === "function"`；要手动看面板用 `window.__claudeFootprint.show()`。
+   触发链路缺什么、后人从哪里接上，写在 CHANGELOG「未移植：请求指纹彩蛋」。
 2. 侧栏底部出现「手机访问」，点开后状态/二维码都能出图（二维码用手机扫一下最稳）。
    面板应当浮在整个应用之上（它 portal 到 `document.body`），**不能**糊在侧栏里；反复点复选框
    不应让侧栏变形。勾选后复选框可能立刻回到勾选态 —— 那是绑定已生效（宿主返回 `0.0.0.0`），
@@ -447,9 +450,12 @@ node build.mjs --base … --claude …                                        # 
 
 冒烟里还有两条**真交互**测试（不是只渲染一次），各自对应一次实机回报：
 
-- **彩蛋**：把 `TZ=` 发布给 watcher 的 session 输入 facade，断言草稿被改写成 `TZ=Asia/Shanghai`
-  且遮罩真的挂到 `document.body`。上游那句 `props.useInput(...)` 在这一版 DSH 里拿到的是
-  `undefined`（输入槽位没有这对 facade），一渲染就抛 —— 光渲染一次是抓不到“触发不了”的。
+- **彩蛋（只测接线）**：把 `TZ=` 发布给 watcher 的**替身** session 输入 facade，断言草稿被改写成
+  `TZ=Asia/Shanghai`、且遮罩真的挂到 `document.body`。这条只保证**接线没断**（座位会沿发布进来的
+  草稿走到面板），**不**代表实机触发 —— 实机仍不触发，所以彩蛋按「未移植」处理（见 CHANGELOG）。
+  它当初抓的是另一个更凶的回归：上游那句 `props.useInput(...)` 在这一版 DSH 里拿到的是
+  `undefined`（输入槽位没有这对 facade），一渲染就抛、整个输入框消失；光渲染一次是抓不到这类
+  “触发不了”的。
 - **局域网面板**：点一下「手机访问」按钮，断言 `LanPanel` 的遮罩经 `createPortal` 落到
   `document.body`、且**不在**侧栏自己的子树里（否则它就被侧栏里那些 `backdrop-filter`
   包含块抓住了）。

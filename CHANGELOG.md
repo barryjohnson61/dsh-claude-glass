@@ -64,9 +64,12 @@ react                                  ^18.2.0
 
 ### 新增的能力（5 项，全部来自上游同一发行版）
 
+其中 **4 项实机可用**；**请求指纹彩蛋只入库、未生效**，按「未移植」处理（见下文
+「未移植：请求指纹彩蛋（代码保留，等后人实现）」）。
+
 | 功能 | 上游出处 | 在 glass 里的形态 |
 | --- | --- | --- |
-| **请求指纹彩蛋** | `plugins/skin/lib/client.js` L427-L823 + apply 接线 | 输入框里打出裸 `TZ=` 时，弹出「请求指纹」面板（系统真实时区 + 按该时区格式化的日期 + 16×12 点阵螃蟹），确认后把草稿替换成 `TZ=Asia/Shanghai`；7 天冷却，`window.__claudeFootprint` 可手动 `.record()/.stop()/.reset()/.show()` |
+| **请求指纹彩蛋** ⚠️ **未生效（按未移植处理）** | `plugins/skin/lib/client.js` L427-L823 + apply 接线 | 代码一字不少地入库（含移植期为它做的两处改写），但**实机在输入框里打裸 `TZ=` 不触发**：这一版 DSH 不把这个座位的草稿交给它。`window.__claudeFootprint` 仍然装着，可手动 `.record()/.stop()/.reset()/.show()` 调试 |
 | **局域网访问** | `plugins/lan-access/` | 侧栏底部「手机访问」入口 + 状态/绑定/二维码三张 host 路由（`/api/dsh-lan-access/{status,bind,qr}`）；二维码是自带的手写 byte-mode QR（versions 1-6, L/M），内联 SVG，无第三方依赖 |
 | **品牌替换** | `brand-plugin/lib/client.js` | 星形标记 + 文字标识替换官方品牌位（`sidebar.brand.mark` / `sidebar.brand.name` / `conversation.hero.brand.mark`，以 `priority: -10` 遮蔽官方注册）+ `document.title` 与 favicon；`localStorage: dsh-claude-brand.prefs` |
 | **Clawd 螃蟹挂件** | `crab-plugin/lib/client.js` | 直接挂在 `[data-composer-card]` 上的像素螃蟹（可选跟随主题、多行台词），7 天冷却的稀有变体；`localStorage: dsh-claude-crab.prefs`，设置页 id `clawd` |
@@ -118,8 +121,9 @@ react                                  ^18.2.0
   输入法、没有真布局引擎，这些仍要在 GUI 里实机确认（见 README §2.1 的验收清单）。
 - `verify.mjs` 与 `tools/mount-smoke.mjs` 各自增加了一条“渲染安全”守卫（移植段必须自带 `React`
   绑定；每个注册的组件都要能渲染一次），两条都用“故意破坏的构建产物”验证过确实会失败（见下）。
-- 冒烟还**驱动两个真交互**（不是只渲染一次）：① 把 `TZ=` 发布给彩蛋 watcher 的 session 输入
-  facade，断言草稿被改写成 `TZ=Asia/Shanghai`、且遮罩真的挂到 `document.body`；② 点一下
+- 冒烟还**驱动两个真交互**（不是只渲染一次）：① 把 `TZ=` 发布给彩蛋 watcher 的**替身** session 输入
+  facade，断言草稿被改写成 `TZ=Asia/Shanghai`、且遮罩真的挂到 `document.body` —— 这条只证明**接线
+  没断**（座位会沿发布进来的草稿走到面板），**不**证明实机触发；② 点一下
   「手机访问」按钮，断言 `LanPanel` 的遮罩经 `createPortal` 落到 `document.body`、且**不在**
   侧栏自己的子树里。两条同样用“故意破坏的产物”（`tools/break-lan-portal.cjs`）验证过会失败。
 - `verify.mjs` 另有两条静态守卫：彩蛋 watcher 必须先 `typeof props.useInput === "function"` 再调用、
@@ -179,22 +183,35 @@ ReferenceError: React is not defined
   `FAIL render "conversation.input.left#claude-fingerprint" threw on first render: React is not defined`
   （两者都以 1 退出），随后重建即恢复全绿。
 
-### 修复：彩蛋读不到草稿（实机发现）
+### 未移植：请求指纹彩蛋（代码保留，等后人实现）
 
-实机复测：`typeof window.__claudeFootprint === "function"`（说明 `apply()` 跑过、helper 装上了、
-`dsh-claude-skin.egg` 冷却戳是 `null`、开关也没关），但输入框里打 `TZ=` 毫无反应。原因在**槽位的
+**结论：这个彩蛋在本版 DSH 里触发不了，1.1.0 起按「未移植」处理 —— 代码一字不删地留在 bundle
+里，留给后来者接上触发链路。**
+
+实机取证（两轮）：`typeof window.__claudeFootprint === "function"`（说明 `apply()` 跑过、helper 装上了、
+`dsh-claude-skin.egg` 冷却戳是 `null`、开关也没关），但输入框里打 `TZ=` 始终毫无反应。根因在**槽位的
 props 契约**：上游假设 `conversation.input.left` 拿得到 `useInput(s => s.draft)` 与 `inputActions`
 （注释里写着「这是契约，不是可选附加项」），而这一版 DSH 只把这对 facade 交给 composer 自己的
-视图 —— 座位拿到的是输入区那一层的 props，里面有的是 `props.keyboard`（session 的输入门面）。
+视图 —— 座位拿到的是输入区那一层的 props，里面只有 `props.keyboard`（session 的输入门面）。
 上游那句 `props.useInput(...)` 在这里就是「拿 `undefined` 当函数调」，而它在 hook 里无条件调用，
 所以条目一渲染就抛（这也是「输入框没反应」的另一半原因，与上一条 `React` 缺失叠加）。
 
-修复（第三处改写）：草稿改从 `props.keyboard` 的**已发布输入状态**读 —— `shell.state` 同时有
-`getSnapshot` 与 `subscribe` 时用 `React.useSyncExternalStore` 订阅（键击不会 re-render 这个座位，
-只在渲染时读一次的话永远只会看到挂载那一刻的值），写回走 `shell.actions.setDraft`；
-`props.useInput` / `props.inputActions` 仍在时优先用它们（上游路径不丢）。每个分支由“座位传了什么”
-决定，对同一个 app 是常量，所以 hook 调用顺序不会在两次渲染之间变化。冒烟测试现在会真的驱动它：
-发布 `TZ=` → 断言草稿变成 `TZ=Asia/Shanghai`，且 `role="dialog"` 的遮罩出现在 `document.body`。
+移植期为它做了两处改写（都已入库）：① 补上 `React` 绑定，否则整个输入框会消失；
+② 草稿改从 `props.keyboard` 的**已发布输入状态**读 —— `shell.state` 同时有 `getSnapshot` 与
+`subscribe` 时用 `React.useSyncExternalStore` 订阅（键击不会 re-render 这个座位，只在渲染时读一次的话
+永远只会看到挂载那一刻的值），写回走 `shell.actions.setDraft`；`props.useInput` / `props.inputActions`
+仍在时优先用它们（上游路径不丢）。每个分支由“座位传了什么”决定，对同一个 app 是常量，所以 hook
+调用顺序不会在两次渲染之间变化。**改完实机复测仍然不触发**，说明草稿并不是以这套门面所假设的形状
+出现在这个座位上 —— 到此停止追这条链路，改记为未移植。
+
+留给后人（这就是本条目存在的意义）：
+- 这个外侧座位能拿到的只有 `props.keyboard`；真正的草稿状态在 composer 自己的输入层里
+  （bundle `dsh-client-ui-conversation` 的输入视图 / Lexical 层），要么找到它对外发布的那个订阅口，
+  要么把 watcher 挂到 composer 内部的注入点，而不是 `conversation.input.left`。
+- 面板本身是好的：`window.__claudeFootprint.show()` 能手动把它叫出来，先确认这一点再怀疑 UI。
+- 冷却戳在 `localStorage: dsh-claude-skin.egg`；`apply()` 里的注册 id 是 `claude-fingerprint`。
+- 冒烟测试仍会驱动它（发布 `TZ=` → 断言草稿变成 `TZ=Asia/Shanghai`、`role="dialog"` 的遮罩出现在
+  `document.body`），但那只保证**接线没断**，不代表实机触发。
 
 ### 修复：局域网面板糊在侧栏里（实机发现）
 
