@@ -10,6 +10,12 @@
  * Dropped: the skin stylesheet (STYLE_ID/CSS) and the "Claude-X" settings
  *          page — glass owns both. Glass's own apply() is appended below.
  * Rewritten: ctx.get("slots") -> ctx.slots (1 site).
+ * Rewritten: the watcher sources the composer draft from the seat's own props
+ *            (`props.keyboard`, the session input facade: subscribe to its
+ *            published input state, write through `actions.setDraft`). This DSH
+ *            hands input slots no `useInput`/`inputActions` pair, so upstream's
+ *            `props.useInput(...)` threw on the first render and the egg never
+ *            fired.
  */
 
 const portSkinEgg = (function () {
@@ -383,15 +389,68 @@ const portSkinEgg = (function () {
 		 * by poking at the Lexical editor. The component renders nothing; it
 		 * exists to receive those two values.
 		 * ------------------------------------------------------------------ */
+		/* ---- glass: reading the composer draft (see FootprintWatcher) ---- */
+
+		/** The shell's published input-state store, when it publishes one. */
+		function clgInputStore(shell) {
+			return shell && shell.state && typeof shell.state.getSnapshot === "function" &&
+				typeof shell.state.subscribe === "function" ? shell.state : null;
+		}
+
+		/** The draft straight off that store, or undefined. */
+		function clgStoreDraft(store) {
+			if (store === null) return undefined;
+			var snap = store.getSnapshot();
+			return snap && typeof snap.draft === "string" ? snap.draft : undefined;
+		}
+
+		/**
+		 * The draft as React must read it.
+		 *
+		 * The composer types into its editor and publishes the result to this
+		 * store; nothing re-renders a seat on a keystroke, so a plain render-time
+		 * read would only ever see the value the seat mounted with. This is
+		 * React's supported way to subscribe to an external store.
+		 */
+		function clgUseStoreDraft(store) {
+			if (typeof React.useSyncExternalStore !== "function") return clgStoreDraft(store);
+			return React.useSyncExternalStore(
+				function (onChange) {
+					return store === null ? function () {} : store.subscribe(onChange);
+				},
+				function () { return clgStoreDraft(store); },
+			);
+		}
+
+		/** Last resort: the shell's own render-time snapshot. */
+		function clgShellDraft(shell) {
+			var snap = shell && shell.snapshot;
+			return snap && typeof snap.draft === "string" ? snap.draft : undefined;
+		}
+
 		function FootprintWatcher(props) {
-			/* `conversation.input.left` is a session-scope slot, so the renderer
-			 * always hands it SessionStandardProps -- `useInput` and
-			 * `inputActions` are part of the contract, not optional extras.
-			 * They are called unconditionally because a hook behind a
-			 * conditional changes the call order between renders, and React
-			 * throws when that happens. */
-			var draft = props.useInput(function (s) { return s.draft; });
+			/* `conversation.input.left` renders INSIDE the composer bar, so the
+			 * props it is handed are that bar's. This DSH hands input slots no
+			 * `useInput` / `inputActions` pair (only the composer's own view gets
+			 * the pair, and upstream's `props.useInput(...)` threw here on the
+			 * first render), but it does hand over `props.keyboard` — the
+			 * session's live input facade: subscribe to its published input state
+			 * for the draft, write through its action face. Upstream's pair still
+			 * wins when a shell provides one; every branch is decided by what the
+			 * seat passes, which is constant for the life of the app, so the hook
+			 * order never changes between renders. */
+			var useInput = typeof props.useInput === "function" ? props.useInput : null;
+			var shell = props.keyboard;
+			var clgState = clgInputStore(shell);
+			var viaHook = useInput === null ? null : useInput(function (s) { return s.draft; });
+			var viaStore = clgUseStoreDraft(clgState);
+			var draft = typeof viaHook === "string" ? viaHook
+				: (typeof viaStore === "string" ? viaStore : clgShellDraft(shell));
 			var actions = props.inputActions;
+			if (!actions && shell) {
+				if (shell.actions && typeof shell.actions.setDraft === "function") actions = shell.actions;
+				else if (typeof shell.setDraft === "function") actions = shell;
+			}
 			/* Remembers the previous draft text rather than a one-shot flag, so
 			 * clearing the box and typing the trigger again fires again. A
 			 * flag would make the joke a once-per-page-load event and there

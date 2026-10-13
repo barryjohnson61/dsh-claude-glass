@@ -61,7 +61,10 @@ code of its own beyond the integration layer described in README.md.
 
   In 1.1.0 the ported theme plugins additionally require
   @deepseek-ai/dsh-client-ui-renderer, -ui-conversation and -ui-sidebar, and the
-  client's `timer` service (crab calls ctx.timeout).
+  client's `timer` service (crab calls ctx.timeout). The LAN panel renders its
+  scrim through `react-dom`'s `createPortal` when the runtime publishes it — the
+  seat lives inside the sidebar, whose glass surfaces are `backdrop-filter`, i.e.
+  containing blocks — and falls back to rendering in place when it does not.
 
 --------------------------------------------------------------------------------
 4. Trademarks / affiliation

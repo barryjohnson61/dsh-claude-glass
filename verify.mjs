@@ -384,6 +384,27 @@ for (const f of PORTED) {
   } else {
     console.log('  ok   no ctx.get("slots") left outside the port headers');
   }
+
+  // The other two rewrites of upstream behaviour, each one earned by a real
+  // report, so each gets a guard. (1) The input slot this DSH hands the egg
+  // watcher has no `useInput`/`inputActions` pair — upstream's unconditional
+  // `props.useInput(...)` threw on the first render, and a throwing seat takes
+  // the whole composer input down with it — so the draft must come from the
+  // seat's `keyboard` facade. (2) The LAN scrim is fixed-position and the seat
+  // sits in the sidebar, whose glass surfaces are filters, i.e. containing
+  // blocks: rendered in place it covered the sidebar's own chrome.
+  if (!code.includes('var useInput = typeof props.useInput === "function" ? props.useInput : null;')) {
+    console.log("  BAD  the egg watcher still calls props.useInput unguarded — that seat throws on render");
+    guardFailures += 1;
+  } else if (!code.includes("clgUseStoreDraft(clgState)")) {
+    console.log("  BAD  the egg watcher never reads the session input store — the draft can never reach TZ=");
+    guardFailures += 1;
+  } else if (!code.includes("clgPortal(scrim, document.body)")) {
+    console.log("  BAD  the LAN scrim is not portalled to document.body — the sidebar's paint context traps it");
+    guardFailures += 1;
+  } else {
+    console.log("  ok   the egg watcher reads props.keyboard, and the LAN scrim goes to document.body");
+  }
 }
 
 // --- ported host halves ------------------------------------------------------

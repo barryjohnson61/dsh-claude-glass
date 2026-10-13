@@ -80,8 +80,10 @@ react                                  ^18.2.0
   重跑一次 + `git diff` 就能跟进上游更新。
 - **为什么 vendoring 而不是构建时 splice**：构建输入保持只有两个（aqua 基线 + `claude/`），
   上游重构不会静默改坏 glass 的构建，且移植内容留在 git 里可审查。
-- **两处改写，都写进文件头注释**：① 每个 client 半边里的 `ctx.get("slots")` → `ctx.slots`；
-  ② `lib/lan-access.js` 的 profile 解析改用宿主发布的 `profileContext`（见下方「修复」一节）。
+- **四处改写，都写进文件头注释**：① 每个 client 半边里的 `ctx.get("slots")` → `ctx.slots`；
+  ② `lib/lan-access.js` 的 profile 解析改用宿主发布的 `profileContext`；③ 彩蛋 watcher 的草稿来源
+  改用输入区自己的 facade（`props.keyboard` 发布的输入状态）；④ `LanPanel` 的遮罩改成 portal 到
+  `document.body`。②③④ 都是实机跑出来的，见下方三个「修复」小节。
 - **客户端**：5 个 client 半边内联进**同一个** `lib/client.js`，各自包在 IIFE 里
   （`const portBrand = (function () { var module = { exports: {} }; … })()`），
   所以它们自己的 `exports.name = "dsh-claude-brand"` 之类不会污染 glass 的 `exports`；
@@ -112,10 +114,16 @@ react                                  ^18.2.0
   状态查询返回绑定与地址；打开开关后 patch 文件里出现托管块、`host: '0.0.0.0'`；**关掉后块被清掉、
   文件里的无关内容原封不动**；并断言 `$DSH_HOME/profiles/web`（即上游会写错的那个目录）**从未被创建**
   ——这就是上面那条实机 bug 的回归守卫。
-- 动态校验也**不能**证明彩蛋在真实输入框里触发、二维码能扫、螃蟹能挂上；
-  这些仍需在 GUI 里实机确认（见 README §2.1 的验收清单）。
+- 动态校验也**不能**证明彩蛋在真实输入框里触发、二维码能扫、螃蟹能挂上；替身环境里没有真
+  输入法、没有真布局引擎，这些仍要在 GUI 里实机确认（见 README §2.1 的验收清单）。
 - `verify.mjs` 与 `tools/mount-smoke.mjs` 各自增加了一条“渲染安全”守卫（移植段必须自带 `React`
   绑定；每个注册的组件都要能渲染一次），两条都用“故意破坏的构建产物”验证过确实会失败（见下）。
+- 冒烟还**驱动两个真交互**（不是只渲染一次）：① 把 `TZ=` 发布给彩蛋 watcher 的 session 输入
+  facade，断言草稿被改写成 `TZ=Asia/Shanghai`、且遮罩真的挂到 `document.body`；② 点一下
+  「手机访问」按钮，断言 `LanPanel` 的遮罩经 `createPortal` 落到 `document.body`、且**不在**
+  侧栏自己的子树里。两条同样用“故意破坏的产物”（`tools/break-lan-portal.cjs`）验证过会失败。
+- `verify.mjs` 另有两条静态守卫：彩蛋 watcher 必须先 `typeof props.useInput === "function"` 再调用、
+  且必须真的订阅输入状态（`clgUseStoreDraft(clgState)`）；遮罩必须是 `clgPortal(scrim, document.body)`。
 
 ### 修复：局域网开关写错 profile（实机发现）
 
@@ -171,9 +179,44 @@ ReferenceError: React is not defined
   `FAIL render "conversation.input.left#claude-fingerprint" threw on first render: React is not defined`
   （两者都以 1 退出），随后重建即恢复全绿。
 
+### 修复：彩蛋读不到草稿（实机发现）
+
+实机复测：`typeof window.__claudeFootprint === "function"`（说明 `apply()` 跑过、helper 装上了、
+`dsh-claude-skin.egg` 冷却戳是 `null`、开关也没关），但输入框里打 `TZ=` 毫无反应。原因在**槽位的
+props 契约**：上游假设 `conversation.input.left` 拿得到 `useInput(s => s.draft)` 与 `inputActions`
+（注释里写着「这是契约，不是可选附加项」），而这一版 DSH 只把这对 facade 交给 composer 自己的
+视图 —— 座位拿到的是输入区那一层的 props，里面有的是 `props.keyboard`（session 的输入门面）。
+上游那句 `props.useInput(...)` 在这里就是「拿 `undefined` 当函数调」，而它在 hook 里无条件调用，
+所以条目一渲染就抛（这也是「输入框没反应」的另一半原因，与上一条 `React` 缺失叠加）。
+
+修复（第三处改写）：草稿改从 `props.keyboard` 的**已发布输入状态**读 —— `shell.state` 同时有
+`getSnapshot` 与 `subscribe` 时用 `React.useSyncExternalStore` 订阅（键击不会 re-render 这个座位，
+只在渲染时读一次的话永远只会看到挂载那一刻的值），写回走 `shell.actions.setDraft`；
+`props.useInput` / `props.inputActions` 仍在时优先用它们（上游路径不丢）。每个分支由“座位传了什么”
+决定，对同一个 app 是常量，所以 hook 调用顺序不会在两次渲染之间变化。冒烟测试现在会真的驱动它：
+发布 `TZ=` → 断言草稿变成 `TZ=Asia/Shanghai`，且 `role="dialog"` 的遮罩出现在 `document.body`。
+
+### 修复：局域网面板糊在侧栏里（实机发现）
+
+用户报告「反复点击复选框时图形界面崩溃」。取证结论是渲染器其实没崩（没有 Crashpad 报告，
+宿主也没重启）：是 `LanPanel` 的 `.dla-scrim`（`position: fixed`）**在侧栏内部渲染**，而侧栏里的
+玻璃表面是 `backdrop-filter` —— 按 CSS 规范，filter/backdrop-filter 会形成**包含块**，于是这个
+「fixed」遮罩被按侧栏那一列定位、并盖住侧栏自己的导航，看起来就像侧栏塌了；反复点开关只是反复
+重渲染它。glass 其实已经为**官方**对话框处理过同一个坑
+（`[data-dsh-cglass] body [role=dialog] { backdrop-filter: blur(50px) }` 加上
+`… [class*=sidebarCol]:has([role=dialog]) { backdrop-filter: none }`），但那个选择器只认官方对话框
+所在的那一列。
+
+修复（第四处改写）：遮罩经 `react-dom` 的 `createPortal` 交给 `document.body`
+（`document` 不可用或运行时没有 `react-dom` 时原地渲染，功能不丢）。DSH 自己的对话框就挂在 body 下
+（glass 那条 `body [role=dialog]` 规则正是为它们写的），所以这条路径和 glass 的观感一致。
+
+顺带说明一件容易被当成 bug 的事：开关以 `info.bindHost === "0.0.0.0"` 判定，绑定生效后宿主返回的
+就是 `0.0.0.0`，所以点完开关、面板重新拉取状态时复选框会**回到勾选态** —— 那是已生效，不是点击无效。
+
 ### 打包
 
-`dist/dsh-claude-glass/dsh-claude-glass-1.1.0.tgz`（26 个条目，约 545 KB；`tools/` 不进包，
+`dist/dsh-claude-glass/dsh-claude-glass-1.1.0.tgz`（26 个条目，约 549 KB；`tools/` 不进包，
 它们只在源码仓库里）。
 
 ---

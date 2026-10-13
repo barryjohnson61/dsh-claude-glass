@@ -197,6 +197,107 @@ function portClient(rel, label, varName) {
   manifest.push([`${label}.client.js`, rel, text, Buffer.byteLength(out, "utf8")]);
 }
 
+/* ------------------------------------- lan-access client: the dialog portal */
+
+/**
+ * `.dla-scrim` is `position:fixed`, and the panel is registered on
+ * `sidebar.footer.action` — so it renders inside the sidebar column. Glass
+ * gives its surfaces a `backdrop-filter`, and a filtered ancestor is the
+ * containing block for its fixed-position descendants: the dialog was then laid
+ * out inside the sidebar card, on top of the navigation (it looked as if the
+ * sidebar had fallen apart) instead of over the viewport. Glass neutralises the
+ * column itself while a dialog sits in it, but the surface in between is still
+ * glassy, so the panel has to leave that paint context altogether.
+ *
+ * The shell renders its own dialogs as children of `document.body` (that is
+ * where glass styles `[role=dialog]`), so the scrim goes out through
+ * `react-dom`'s portal. A runtime that cannot resolve react-dom still renders
+ * the panel in place.
+ */
+const LAN_CLIENT_BIND_ANCHOR = "\t\tvar h = React.createElement;";
+
+const LAN_CLIENT_BIND_FIXED = [
+  "\t\tvar h = React.createElement;",
+  "",
+  "\t\t/* react-dom is part of the client runtime (other installed plugins",
+  "\t\t * require it). The portal it provides is what carries the dialog out of",
+  "\t\t * the sidebar's paint context; a runtime without it renders in place. */",
+  "\t\tvar clgReactDOM = null;",
+  "\t\ttry { clgReactDOM = require(\"react-dom\"); } catch (e) { clgReactDOM = null; }",
+  "\t\tvar clgPortal = clgReactDOM && typeof clgReactDOM.createPortal === \"function\"",
+  "\t\t\t? clgReactDOM.createPortal : null;",
+].join("\n");
+
+const LAN_CLIENT_PORTAL_ANCHOR = [
+  "\t\t\treturn h(",
+  "\t\t\t\t\"div\",",
+  "\t\t\t\t{",
+  "\t\t\t\t\tclassName: \"dla-scrim\",",
+  "\t\t\t\t\trole: \"dialog\",",
+  "\t\t\t\t\t\"aria-modal\": \"true\",",
+  "\t\t\t\t\t\"aria-label\": \"手机访问\",",
+  "\t\t\t\t\tonClick: function (e) { if (e.target === e.currentTarget) props.onClose(); },",
+  "\t\t\t\t},",
+  "\t\t\t\tcard,",
+  "\t\t\t);",
+  "\t\t}",
+].join("\n");
+
+const LAN_CLIENT_PORTAL_FIXED = [
+  "\t\t\tvar scrim = h(",
+  "\t\t\t\t\"div\",",
+  "\t\t\t\t{",
+  "\t\t\t\t\tclassName: \"dla-scrim\",",
+  "\t\t\t\t\trole: \"dialog\",",
+  "\t\t\t\t\t\"aria-modal\": \"true\",",
+  "\t\t\t\t\t\"aria-label\": \"手机访问\",",
+  "\t\t\t\t\tonClick: function (e) { if (e.target === e.currentTarget) props.onClose(); },",
+  "\t\t\t\t},",
+  "\t\t\t\tcard,",
+  "\t\t\t);",
+  "\t\t\t/* Glass painting note (a rewrite, not upstream's code): the scrim is",
+  "\t\t\t * fixed-position, and this seat lives inside the sidebar, whose glass",
+  "\t\t\t * surfaces are filters — i.e. containing blocks. Hand it to the shell's",
+  "\t\t\t * own dialog layer instead. */",
+  "\t\t\tif (clgPortal !== null && typeof document !== \"undefined\" && document.body) {",
+  "\t\t\t\treturn clgPortal(scrim, document.body);",
+  "\t\t\t}",
+  "\t\t\treturn scrim;",
+  "\t\t}",
+].join("\n");
+
+const LAN_CLIENT_PORTAL_NOTE =
+  `Rewritten: LanPanel's scrim is portalled to document.body through\n` +
+  `           react-dom. It renders inside the sidebar column, and glass's\n` +
+  `           filtered surfaces inside that column are containing blocks, so a\n` +
+  `           fixed-position scrim covered the sidebar's own chrome instead of\n` +
+  `           the viewport.`;
+
+function portLanAccessClient() {
+  const rel = "plugins/lan-access/lib/client.js";
+  const label = "lan-access";
+  const text = read(rel, label);
+  if (text === "") return;
+  const body = factoryBody(text, label);
+  if (body === "") return;
+  require1(body, 'ctx.get("slots")', label);
+  const eol = body.includes("\r\n") ? "\r\n" : "\n";
+  const portalAnchor = LAN_CLIENT_PORTAL_ANCHOR.split("\n").join(eol);
+  const bindOk = require1(body, LAN_CLIENT_BIND_ANCHOR, label);
+  const portalOk = require1(body, portalAnchor, label);
+  let rewritten = body.split('ctx.get("slots")').join("ctx.slots");
+  if (bindOk) rewritten = rewritten.replace(LAN_CLIENT_BIND_ANCHOR, LAN_CLIENT_BIND_FIXED.split("\n").join(eol));
+  if (portalOk) rewritten = rewritten.replace(portalAnchor, LAN_CLIENT_PORTAL_FIXED.split("\n").join(eol));
+  require1(rewritten, "clgPortal(scrim, document.body)", label);
+  const out =
+    HEADER(rel, text, `${REWRITE_NOTE}\n${LAN_CLIENT_PORTAL_NOTE}`) +
+    `\nconst portLanAccess = (function () {\n` +
+    rewritten.replace(/\s*$/, "\n") +
+    `})();\n`;
+  writeFileSync(join(OUT, `${label}.client.js`), out, "utf8");
+  manifest.push([`${label}.client.js`, rel, text, Buffer.byteLength(out, "utf8")]);
+}
+
 /* ------------------------------------------------------ skin: the egg subset */
 
 /**
@@ -252,6 +353,112 @@ const SKIN_EGG_APPLY = `
 		return module.exports;
 `;
 
+/**
+ * The watcher's source of truth for the composer draft.
+ *
+ * `conversation.input.left` is rendered with the props of the seat's registry
+ * `inject`, and on this DSH the composer's registry returns
+ * `keyboard / addFiles / removeAttachment / resolveDraftAttachments /
+ * retryFileUpload / toggleCommandMenu / stop / hooks` — the `useInput` +
+ * `inputActions` pair upstream reads is handed to the composer's own *view*,
+ * not to input slots. Upstream's `props.useInput(...)` therefore threw on the
+ * first render and the egg never fired (in the real client that error also
+ * blanked the composer's input area).
+ *
+ * `props.keyboard` is the session's live input facade (`SessionInputShell`):
+ * `.state` is its published input store (`getSnapshot()` carries `draft`) and
+ * `.actions.setDraft` is its public write. The upstream pair is still honoured
+ * first, should a shell hand one over.
+ */
+const SKIN_WATCHER_ANCHOR = [
+  "\t\t\t/* `conversation.input.left` is a session-scope slot, so the renderer",
+  "\t\t\t * always hands it SessionStandardProps -- `useInput` and",
+  "\t\t\t * `inputActions` are part of the contract, not optional extras.",
+  "\t\t\t * They are called unconditionally because a hook behind a",
+  "\t\t\t * conditional changes the call order between renders, and React",
+  "\t\t\t * throws when that happens. */",
+  "\t\t\tvar draft = props.useInput(function (s) { return s.draft; });",
+  "\t\t\tvar actions = props.inputActions;",
+].join("\n");
+
+const SKIN_WATCHER_FIXED = [
+  "\t\t\t/* `conversation.input.left` renders INSIDE the composer bar, so the",
+  "\t\t\t * props it is handed are that bar's. This DSH hands input slots no",
+  "\t\t\t * `useInput` / `inputActions` pair (only the composer's own view gets",
+  "\t\t\t * the pair, and upstream's `props.useInput(...)` threw here on the",
+  "\t\t\t * first render), but it does hand over `props.keyboard` — the",
+  "\t\t\t * session's live input facade: subscribe to its published input state",
+  "\t\t\t * for the draft, write through its action face. Upstream's pair still",
+  "\t\t\t * wins when a shell provides one; every branch is decided by what the",
+  "\t\t\t * seat passes, which is constant for the life of the app, so the hook",
+  "\t\t\t * order never changes between renders. */",
+  "\t\t\tvar useInput = typeof props.useInput === \"function\" ? props.useInput : null;",
+  "\t\t\tvar shell = props.keyboard;",
+  "\t\t\tvar clgState = clgInputStore(shell);",
+  "\t\t\tvar viaHook = useInput === null ? null : useInput(function (s) { return s.draft; });",
+  "\t\t\tvar viaStore = clgUseStoreDraft(clgState);",
+  "\t\t\tvar draft = typeof viaHook === \"string\" ? viaHook",
+  "\t\t\t\t: (typeof viaStore === \"string\" ? viaStore : clgShellDraft(shell));",
+  "\t\t\tvar actions = props.inputActions;",
+  "\t\t\tif (!actions && shell) {",
+  "\t\t\t\tif (shell.actions && typeof shell.actions.setDraft === \"function\") actions = shell.actions;",
+  "\t\t\t\telse if (typeof shell.setDraft === \"function\") actions = shell;",
+  "\t\t\t}",
+].join("\n");
+
+const SKIN_WATCHER_CALL = "\t\tfunction FootprintWatcher(props) {";
+
+const SKIN_WATCHER_HELPERS = [
+  "\t\t/* ---- glass: reading the composer draft (see FootprintWatcher) ---- */",
+  "",
+  "\t\t/** The shell's published input-state store, when it publishes one. */",
+  "\t\tfunction clgInputStore(shell) {",
+  "\t\t\treturn shell && shell.state && typeof shell.state.getSnapshot === \"function\" &&",
+  "\t\t\t\ttypeof shell.state.subscribe === \"function\" ? shell.state : null;",
+  "\t\t}",
+  "",
+  "\t\t/** The draft straight off that store, or undefined. */",
+  "\t\tfunction clgStoreDraft(store) {",
+  "\t\t\tif (store === null) return undefined;",
+  "\t\t\tvar snap = store.getSnapshot();",
+  "\t\t\treturn snap && typeof snap.draft === \"string\" ? snap.draft : undefined;",
+  "\t\t}",
+  "",
+  "\t\t/**",
+  "\t\t * The draft as React must read it.",
+  "\t\t *",
+  "\t\t * The composer types into its editor and publishes the result to this",
+  "\t\t * store; nothing re-renders a seat on a keystroke, so a plain render-time",
+  "\t\t * read would only ever see the value the seat mounted with. This is",
+  "\t\t * React's supported way to subscribe to an external store.",
+  "\t\t */",
+  "\t\tfunction clgUseStoreDraft(store) {",
+  "\t\t\tif (typeof React.useSyncExternalStore !== \"function\") return clgStoreDraft(store);",
+  "\t\t\treturn React.useSyncExternalStore(",
+  "\t\t\t\tfunction (onChange) {",
+  "\t\t\t\t\treturn store === null ? function () {} : store.subscribe(onChange);",
+  "\t\t\t\t},",
+  "\t\t\t\tfunction () { return clgStoreDraft(store); },",
+  "\t\t\t);",
+  "\t\t}",
+  "",
+  "\t\t/** Last resort: the shell's own render-time snapshot. */",
+  "\t\tfunction clgShellDraft(shell) {",
+  "\t\t\tvar snap = shell && shell.snapshot;",
+  "\t\t\treturn snap && typeof snap.draft === \"string\" ? snap.draft : undefined;",
+  "\t\t}",
+  "",
+  "",
+].join("\n");
+
+const SKIN_WATCHER_NOTE =
+  `Rewritten: the watcher sources the composer draft from the seat's own props\n` +
+  `           (\`props.keyboard\`, the session input facade: subscribe to its\n` +
+  `           published input state, write through \`actions.setDraft\`). This DSH\n` +
+  `           hands input slots no \`useInput\`/\`inputActions\` pair, so upstream's\n` +
+  `           \`props.useInput(...)\` threw on the first render and the egg never\n` +
+  `           fired.`;
+
 function portSkinEgg() {
   const rel = "plugins/skin/lib/client.js";
   const label = "skin-egg";
@@ -268,6 +475,11 @@ function portSkinEgg() {
   require1(body, '"conversation.input.left", id: "claude-fingerprint"', label);
   require1(body, "function FootprintWatcher(props) {", label);
   require1(body, 'ctx.get("slots")', label);
+  /* The watcher's props handling is rewritten — see SKIN_WATCHER_FIXED. Its
+   * anchor spans lines, so it has to speak the checkout's own line endings. */
+  const weol = body.includes("\r\n") ? "\r\n" : "\n";
+  const watcherAnchor = SKIN_WATCHER_ANCHOR.split("\n").join(weol);
+  require1(body, watcherAnchor, label);
 
   const from = body.indexOf('var EGG_STORE = "dsh-claude-skin.egg";');
   const to = body.indexOf("function apply(ctx) {");
@@ -277,7 +489,16 @@ function portSkinEgg() {
   }
   /* The slice starts mid-line, so the first line arrives unindented; give it
    * the two tabs the rest of the body carries and keep the diff honest. */
-  const subset = ("\t\t" + body.slice(from, to)).replace(/\s*$/, "\n");
+  let subset = ("\t\t" + body.slice(from, to)).replace(/\s*$/, "\n");
+  /* Two rewrites inside the subset: the draft source, and the helpers it needs
+   * right above the component. Both are asserted, so upstream drift cannot
+   * quietly drop them. */
+  subset = subset.split(watcherAnchor).join(SKIN_WATCHER_FIXED.split("\n").join(weol));
+  subset = subset.split(SKIN_WATCHER_CALL).join(
+    SKIN_WATCHER_HELPERS.split("\n").join(weol) + SKIN_WATCHER_CALL,
+  );
+  require1(subset, "clgUseStoreDraft(clgState)", label);
+  require1(subset, "var clgState = clgInputStore(shell);", label);
 
   const out =
     HEADER(
@@ -287,7 +508,8 @@ function portSkinEgg() {
         `Taken  : var EGG_STORE … FootprintWatcher (one contiguous run).\n` +
         `Dropped: the skin stylesheet (STYLE_ID/CSS) and the "Claude-X" settings\n` +
         `         page — glass owns both. Glass's own apply() is appended below.\n` +
-        REWRITE_NOTE,
+        REWRITE_NOTE + "\n" +
+        SKIN_WATCHER_NOTE,
     ) +
     `\nconst portSkinEgg = (function () {\n` +
     `\t\tvar module = { exports: {} };\n` +
@@ -465,7 +687,7 @@ mkdirSync(OUT, { recursive: true });
 portClient("brand-plugin/lib/client.js", "brand", "portBrand");
 portClient("crab-plugin/lib/client.js", "crab", "portCrab");
 portClient("plugins/font-switcher/lib/client.js", "font-switcher", "portFontSwitcher");
-portClient("plugins/lan-access/lib/client.js", "lan-access", "portLanAccess");
+portLanAccessClient();
 portSkinEgg();
 
 portLanAccessHost();

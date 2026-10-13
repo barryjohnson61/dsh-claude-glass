@@ -6,6 +6,11 @@
  * Upstream sha256:0bd9e852e424ed04, 13839 bytes.
  *
  * Rewritten: ctx.get("slots") -> ctx.slots (1 site).
+ * Rewritten: LanPanel's scrim is portalled to document.body through
+ *            react-dom. It renders inside the sidebar column, and glass's
+ *            filtered surfaces inside that column are containing blocks, so a
+ *            fixed-position scrim covered the sidebar's own chrome instead of
+ *            the viewport.
  */
 
 const portLanAccess = (function () {
@@ -16,6 +21,14 @@ const portLanAccess = (function () {
 
 		var React = require("react");
 		var h = React.createElement;
+
+		/* react-dom is part of the client runtime (other installed plugins
+		 * require it). The portal it provides is what carries the dialog out of
+		 * the sidebar's paint context; a runtime without it renders in place. */
+		var clgReactDOM = null;
+		try { clgReactDOM = require("react-dom"); } catch (e) { clgReactDOM = null; }
+		var clgPortal = clgReactDOM && typeof clgReactDOM.createPortal === "function"
+			? clgReactDOM.createPortal : null;
 
 		var ROUTE_STATUS = "/api/dsh-lan-access/status";
 		var ROUTE_SET = "/api/dsh-lan-access/bind";
@@ -279,7 +292,7 @@ const portLanAccess = (function () {
 				h("div", { className: "dla-body" }, body),
 			);
 
-			return h(
+			var scrim = h(
 				"div",
 				{
 					className: "dla-scrim",
@@ -290,6 +303,14 @@ const portLanAccess = (function () {
 				},
 				card,
 			);
+			/* Glass painting note (a rewrite, not upstream's code): the scrim is
+			 * fixed-position, and this seat lives inside the sidebar, whose glass
+			 * surfaces are filters — i.e. containing blocks. Hand it to the shell's
+			 * own dialog layer instead. */
+			if (clgPortal !== null && typeof document !== "undefined" && document.body) {
+				return clgPortal(scrim, document.body);
+			}
+			return scrim;
 		}
 
 		/**

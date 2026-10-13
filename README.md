@@ -62,7 +62,7 @@
 | 功能 | 怎么用 | 依赖的宿主服务 |
 | --- | --- | --- |
 | **请求指纹彩蛋** | 在输入框里打出**裸** `TZ=`（不带参数）→ 弹出「请求指纹」面板：系统真实时区、按该时区格式化的日期、16×12 点阵螃蟹；确认后草稿被替换成 `TZ=Asia/Shanghai`。7 天冷却；`window.__claudeFootprint` 可 `.record()/.stop()/.reset()/.show()` 手动调试 | 无（纯客户端） |
-| **局域网访问** | 侧栏底部「手机访问」图标 → 面板显示本机 LAN 地址、端口、二维码与绑定开关 | `connection` + `webServer` |
+| **局域网访问** | 侧栏底部「手机访问」图标 → 面板显示本机 LAN 地址、端口、二维码与绑定开关（面板经 `react-dom` 的 portal 渲染到 `document.body`，不留在侧栏的包含块里） | `connection` + `webServer` |
 | **品牌替换** | 星形标记替换官方品牌位，同时改 `document.title` 与 favicon；偏好存 `localStorage: dsh-claude-brand.prefs` | 无 |
 | **Clawd 螃蟹挂件** | 直接落在输入框卡片（`[data-composer-card]`）上的像素螃蟹，设置页 id `clawd` | `timer`（客户端） |
 | **字体切换** | 设置 → 字体（id `fonts`）：衬线 / 无衬线 / 等宽各选一组；切换后皮肤里所有字面量 token 自动跟随 | `connection`（客户端半边另需 host 路由） |
@@ -70,8 +70,12 @@
 **验收清单（静态校验查不到，必须在 GUI 里实机确认）**：
 
 1. 输入框打 `TZ=` → 面板出现，日期与系统时区一致，确认后草稿变成 `TZ=Asia/Shanghai`；
-   再打一次不会立刻重复弹出（冷却）。
+   再打一次不会立刻重复弹出（冷却）。草稿是从输入区自己的 facade（`props.keyboard` 发布的输入状态）
+   订阅来的 —— 这一版 DSH 不把 `useInput`/`inputActions` 交给输入槽位。
 2. 侧栏底部出现「手机访问」，点开后状态/二维码都能出图（二维码用手机扫一下最稳）。
+   面板应当浮在整个应用之上（它 portal 到 `document.body`），**不能**糊在侧栏里；反复点复选框
+   不应让侧栏变形。勾选后复选框可能立刻回到勾选态 —— 那是绑定已生效（宿主返回 `0.0.0.0`），
+   不是点击无效。
    勾上开关后它要写进**当前启动的那个 profile** 的 `cordis.patch.yml`
    （本机 = `%USERPROFILE%\.dsh\profiles\desktop\`；路径取自宿主的 `profileContext`，不再依赖
    `DSH_PROFILE`），并提示重启宿主才生效。若宿主没配置 LAN 绑定，这里应显示失败而不是白屏。
@@ -441,6 +445,22 @@ node tools\mount-smoke.mjs                                                # FAIL
 node build.mjs --base … --claude …                                        # 重建即恢复全绿
 ```
 
+冒烟里还有两条**真交互**测试（不是只渲染一次），各自对应一次实机回报：
+
+- **彩蛋**：把 `TZ=` 发布给 watcher 的 session 输入 facade，断言草稿被改写成 `TZ=Asia/Shanghai`
+  且遮罩真的挂到 `document.body`。上游那句 `props.useInput(...)` 在这一版 DSH 里拿到的是
+  `undefined`（输入槽位没有这对 facade），一渲染就抛 —— 光渲染一次是抓不到“触发不了”的。
+- **局域网面板**：点一下「手机访问」按钮，断言 `LanPanel` 的遮罩经 `createPortal` 落到
+  `document.body`、且**不在**侧栏自己的子树里（否则它就被侧栏里那些 `backdrop-filter`
+  包含块抓住了）。
+
+```powershell
+node tools\break-lan-portal.cjs dist\dsh-claude-glass\lib\client.js       # 把 portal 改回原地渲染
+node verify.mjs "dist\dsh-claude-glass\lib\client.js"                     # BAD … exit 1
+node tools\mount-smoke.mjs                                                # FAIL the LAN panel … exit 1
+node build.mjs --base … --claude …                                        # 重建即恢复全绿
+```
+
 两点须知：它是**替身环境**，不是浏览器 —— 没有真 DOM，所以个别只为真浏览器而写的 effect
 会被标成 `(needs a real browser)` 而不是失败；它证明的是**接线**，界面观感仍以 §2.1 的
 GUI 清单为准。
@@ -467,6 +487,7 @@ dsh-claude-glass/
 │  ├─ port-from-theme.mjs    §5.4 的再移植生成器（重跑即跟进上游）
 │  ├─ mount-smoke.mjs        §5.5 的动态挂载冒烟（替身 ctx/DOM 真执行产物）
 │  ├─ break-render-binding.cjs §5.5 的“负面测试”：故意删掉绑定，证明守卫会红
+│  ├─ break-lan-portal.cjs   §5.5 的“负面测试”：故意把 portal 改回原地渲染
 │  └─ toggle-repro/          §5.1 侧栏包含块缺陷的真 Electron 台架（真核心 CSS）
 │     ├─ main.js             `electron main.js <bundleA> <bundleB>`，输出 JSON 对照
 │     ├─ core-layout-css.txt 从 dsh-client-ui-layout 抽出的核心 CSS

@@ -53,11 +53,26 @@ const styleStub = () => ({
   getPropertyPriority: () => "", item: () => "",
 });
 const el = () => Object.setPrototypeOf({
-  style: styleStub(), dataset: {}, className: "", textContent: "", innerHTML: "", outerHTML: "", id: "",
+  style: styleStub(), dataset: {}, attrs: {}, className: "", textContent: "", innerHTML: "", outerHTML: "", id: "",
   children: [], childNodes: [], firstChild: null, lastChild: null, parentNode: null, parentElement: null,
   classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-  setAttribute() {}, removeAttribute() {}, getAttribute: () => null, hasAttribute: () => false,
-  appendChild(c) { return c; }, append() {}, prepend() {}, removeChild(c) { return c; }, insertBefore(c) { return c; },
+  setAttribute(k, v) { this.attrs[k] = String(v); }, removeAttribute(k) { delete this.attrs[k]; },
+  getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }, hasAttribute(k) { return k in this.attrs; },
+  // Real bookkeeping: the tests below look for what a plugin actually mounted
+  // (the egg's dialog on document.body), so appending has to be observable.
+  appendChild(c) {
+    this.children.push(c); this.childNodes.push(c); this.lastChild = c;
+    if (c) { c.parentNode = this; c.parentElement = this; }
+    return c;
+  },
+  append() {}, prepend() {},
+  removeChild(c) {
+    const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1);
+    const j = this.childNodes.indexOf(c); if (j >= 0) this.childNodes.splice(j, 1);
+    if (c) { c.parentNode = null; c.parentElement = null; }
+    return c;
+  },
+  insertBefore(c) { this.appendChild(c); return c; },
   remove() {}, replaceChildren() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true,
   querySelector: () => null, querySelectorAll: () => [], closest: () => null, contains: () => false,
   // innerHTML parsing: the skin builds markup with innerHTML and then reads
@@ -130,15 +145,47 @@ for (const [name, ctor] of Object.entries(DOM_CTORS)) {
 }
 
 /* ------------------------------------------------------------ react stand-in */
+/*
+ * Two behaviours here are load-bearing for the behavioural tests further down,
+ * and without them those tests can only ever watch a first render:
+ *   - `useEffect` collects instead of dropping, so a test can run the effects a
+ *     component registered (the egg watcher only reacts to the draft inside its
+ *     effect — a bare render can never show it);
+ *   - `useState` keeps its slots across renders, so a test can click a button,
+ *     render the component again and see the state it set (the LAN panel only
+ *     mounts once its entry's `open` flag has flipped).
+ */
+let hookSlots = [];
+let hookIndex = 0;
+const resetHookSlots = () => { hookSlots = []; hookIndex = 0; };
+const resetHookCursor = () => { hookIndex = 0; };
+const pendingEffects = [];
+const flushEffects = () => {
+  const queued = pendingEffects.splice(0, pendingEffects.length);
+  for (const fn of queued) {
+    try { fn(); } catch (error) { note("effect", "manual flush", error); }
+  }
+  return queued.length;
+};
 const react = {
   createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
   createContext: (value) => ({ Provider: ({ children }) => children, Consumer: () => null, _value: value }),
-  useState: (v) => [typeof v === "function" ? v() : v, () => {}],
+  useState: (init) => {
+    const at = hookIndex++;
+    if (!(at in hookSlots)) hookSlots[at] = typeof init === "function" ? init() : init;
+    return [
+      hookSlots[at],
+      (next) => { hookSlots[at] = typeof next === "function" ? next(hookSlots[at]) : next; },
+    ];
+  },
   useRef: (v) => ({ current: v ?? null }),
-  useEffect: () => {}, useLayoutEffect: () => {}, useInsertionEffect: () => {},
+  useEffect: (fn) => { if (typeof fn === "function") pendingEffects.push(fn); },
+  useLayoutEffect: (fn) => { if (typeof fn === "function") pendingEffects.push(fn); },
+  useInsertionEffect: () => {},
   useMemo: (fn) => (typeof fn === "function" ? fn() : undefined),
   useCallback: (fn) => fn, useContext: () => ({}), useReducer: (r, i) => [i, () => {}],
-  useSyncExternalStore: (s) => (typeof s === "function" ? s() : undefined),
+  useSyncExternalStore: (_subscribe, getSnapshot) =>
+    (typeof getSnapshot === "function" ? getSnapshot() : undefined),
   useTransition: () => [false, (f) => f && f()], useDeferredValue: (v) => v, useId: () => "test-id",
   useImperativeHandle: () => {}, useDebugValue: () => {},
   forwardRef: (f) => f, memo: (f) => f, Fragment: "Fragment", StrictMode: "StrictMode",
@@ -155,7 +202,14 @@ const jsxRuntime = {
   jsxDEV: (type, props) => ({ type, props: props ?? {}, children: [] }),
   Fragment: "Fragment",
 };
-const reactDom = { createPortal: (n) => n, render: () => {}, flushSync: (f) => f && f(), version: "18.2.0-test" };
+// Portals are recorded, and the returned handle is opaque on purpose: React
+// does not put a portalled child in the tree that rendered it, so a test must
+// not be able to find it there either.
+const portals = [];
+const reactDom = {
+  createPortal: (node, container) => { portals.push({ node, container }); return { $$portal: true, node, container }; },
+  render: () => {}, flushSync: (f) => f && f(), version: "18.2.0-test",
+};
 reactDom.default = reactDom;
 
 // Any @deepseek-ai/* client package (primitives, settings, theme, …) resolves at
@@ -179,7 +233,9 @@ const anyStub = new Proxy(function () {}, {
   construct: () => anyStub,
 });
 const requiredDshPackages = new Set();
+const requiredModules = new Set();
 const requireShim = (name) => {
+  requiredModules.add(name);
   if (name === "react") return react;
   if (name === "react/jsx-runtime" || name === "react/jsx-dev-runtime") return jsxRuntime;
   if (name === "react-dom" || name === "react-dom/client") return reactDom;
@@ -339,9 +395,26 @@ if (exports$ && typeof exports$ === "object") {
     { useInput: (sel) => sel({ draft: "" }), inputActions: { setDraft() {} } },
     { get: (t, k) => (k in t ? t[k] : permissive(String(k))) },
   );
+  // Depth-first walk over a rendered element tree (children arrays and nested
+  // `props.children` both appear, depending on how the seat built them).
+  const findNode = (tree, match) => {
+    const stack = [tree];
+    const visited = new Set();
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (Array.isArray(node)) { for (const kid of node) stack.push(kid); continue; }
+      if (!node || typeof node !== "object" || visited.has(node)) continue;
+      visited.add(node);
+      if (match(node)) return node;
+      if (Array.isArray(node.children)) for (const kid of node.children) stack.push(kid);
+      if (node.props && node.props.children !== undefined) stack.push(node.props.children);
+    }
+    return undefined;
+  };
   let rendered = 0;
   for (const entry of seen.components) {
     try {
+      resetHookSlots();
       entry.comp(compProps);
       rendered += 1;
     } catch (error) {
@@ -351,6 +424,104 @@ if (exports$ && typeof exports$ === "object") {
     }
   }
   say(`  components rendered   : ${rendered}/${seen.components.length}`);
+  say(`  require() seen        : ${[...requiredModules].join(" | ") || "(none)"}`);
+
+  /*
+   * Behavioural test 1 — the request-fingerprint egg. A bare `TZ=` in the
+   * composer must open the scrim and rewrite the draft to `TZ=Asia/Shanghai`.
+   * A bare render can never show that: the watcher reads the draft through its
+   * props and reacts in an effect, so drive it the way the shell does — hand it
+   * the session input facade, mount, publish a draft, notify, render again.
+   */
+  const eggSeat = seen.components.find((e) => e.desc === "conversation.input.left#claude-fingerprint");
+  if (eggSeat === undefined) {
+    fail("the egg watcher never registered on conversation.input.left");
+  } else {
+    let published = "";
+    let listener = null;
+    const inputStore = {
+      getSnapshot: () => ({ draft: published }),
+      subscribe: (fn) => { listener = fn; return () => { listener = null; }; },
+    };
+    const keyboard = { state: inputStore, actions: { setDraft: (value) => { published = String(value); } } };
+    const eggProps = new Proxy(
+      { keyboard, useInput: undefined, inputActions: undefined },
+      { get: (t, k) => (k in t ? t[k] : permissive(String(k))) },
+    );
+    try {
+      resetHookSlots();
+      eggSeat.comp(eggProps);
+      flushEffects();
+      published = "TZ=";
+      if (typeof listener === "function") listener();
+      resetHookCursor();
+      eggSeat.comp(eggProps);
+      flushEffects();
+      const scrim = doc.body.children.find(
+        (n) => n && typeof n.getAttribute === "function" && n.getAttribute("role") === "dialog",
+      );
+      if (published !== "TZ=Asia/Shanghai") {
+        fail(`the egg did not fire: the draft is ${JSON.stringify(published)}, expected "TZ=Asia/Shanghai"`);
+      } else if (scrim === undefined) {
+        fail("the egg rewrote the draft but mounted no scrim on document.body");
+      } else {
+        say('  ok   a bare "TZ=" fires the egg: draft -> "TZ=Asia/Shanghai", scrim mounted on document.body');
+      }
+    } catch (error) {
+      fail(`driving the egg watcher threw: ${String(error?.message ?? error)}`);
+    }
+  }
+
+  /*
+   * Behavioural test 2 — the LAN panel's portal. Its scrim is position:fixed and
+   * the seat lives inside the sidebar, whose glass surfaces are filters, i.e.
+   * containing blocks: rendered in place, the scrim painted over the sidebar's
+   * own chrome (that is the "sidebar falls apart" report). It has to reach
+   * document.body through react-dom's portal instead.
+   */
+  const lanSeat = seen.components.find((e) => e.desc === "sidebar.footer.action#lan-access");
+  if (lanSeat === undefined) {
+    fail("the LAN entry never registered on sidebar.footer.action");
+  } else {
+    const before = portals.length;
+    try {
+      resetHookSlots();
+      const closed = lanSeat.comp(compProps);
+      const button = findNode(
+        closed,
+        (n) => n && n.props && typeof n.props.onClick === "function" && n.props.className === "dla-btn",
+      );
+      if (button === undefined) {
+        fail("the LAN entry rendered no clickable .dla-btn — there is no way to open the panel");
+      } else {
+        button.props.onClick();
+        resetHookCursor();
+        const open = lanSeat.comp(compProps);
+        // The entry only returns a `<LanPanel …>` element; in a real renderer
+        // React would call it. Nothing here does, so call it the way React
+        // would — otherwise the portal never runs and the test would pass on a
+        // panel that is never mounted at all.
+        const panel = findNode(open, (n) => typeof n.type === "function" && n.type.name === "LanPanel");
+        if (panel === undefined) {
+          fail("the LAN entry flipped open but rendered no LanPanel element");
+        } else {
+          resetHookSlots();
+          panel.type(panel.props);
+          const portal = portals.slice(before).find((p) => p.container === doc.body);
+          if (portal === undefined) {
+            fail("the LAN panel never reached document.body through createPortal — the sidebar's containing block still traps it");
+          } else if (findNode(open, (n) => n && n.props && n.props.className === "dla-scrim") !== undefined) {
+            fail("the LAN scrim is still rendered inside the sidebar's own tree");
+          } else {
+            say("  ok   the LAN scrim is portalled to document.body, out of the sidebar's paint context");
+          }
+        }
+      }
+    } catch (error) {
+      fail(`driving the LAN entry threw: ${String(error?.message ?? error)}`);
+    }
+  }
+
   if (seen.effects.length === 0) fail("apply(ctx) registered no effects at all");
 }
 
