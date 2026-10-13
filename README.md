@@ -159,12 +159,13 @@ node build.mjs
 ```powershell
 node build.mjs                                            # 任何锚点失配都会以非零退出码 + BUILD PROBLEMS 中止
 node verify.mjs dist/dsh-claude-glass/lib/client.js       # 必须带路径参数
+node tools\mount-smoke.mjs                                # 动态挂载冒烟（见 §5.2）
 node pack.mjs                                             # 出 tgz（pnpm 优先，退回 npm）
 node pack.mjs --dest "$env:USERPROFILE\.dsh\profiles\desktop\vendor"   # 顺带投递到 profile
 ```
 
-也可以走 `package.json` 的脚本：`npm run build` / `npm run verify` / `npm run pack` /
-`npm run release`（三连）。`build.mjs` 的产物写到 `dist/dsh-claude-glass`。
+也可以走 `package.json` 的脚本：`npm run build` / `npm run verify` / `npm run smoke` /
+`npm run pack` / `npm run release`（四连）。`build.mjs` 的产物写到 `dist/dsh-claude-glass`。
 
 > `pack.mjs` 会自动探测可用打包器（`DSH_PACK_CMD` → `pnpm` → `npm`），所以
 > 在没装 pnpm 的机器上也能出包；若 pnpm 只是不在 `PATH` 里，用
@@ -402,6 +403,25 @@ git diff --stat src\port
 `src/port/PORT-MANIFEST.md` 记录本次移植对应的上游 commit 与每个文件的 sha256 前 16 位，
 所以「这段 vendored 代码来源哪一版」永远可查。
 
+### 5.5 动态挂载冒烟（`tools/mount-smoke.mjs`）
+
+`verify.mjs` 是**静态**的：它证明 bundle 里有那些字面量。`tools/mount-smoke.mjs` 补上另一半 ——
+它真的**执行**构建产物：用一个替身 `window.__ModuleLoader__` + 替身 `require` 把
+`lib/client.js` 加载起来、对记录用的假 `ctx` 调用 `apply(ctx)`，再同样跑一遍 `lib/index.js`。
+
+```powershell
+node tools\mount-smoke.mjs            # 或 npm run smoke；默认检查 dist/dsh-claude-glass
+```
+
+它会断言静态检查看不到的东西：模块 id 与 `exports.inject`（含 `timer`）、5 个移植半边是否
+真的挂上（`settings.section#clawd`、`settings.section#fonts`、`sidebar.footer.action#lan-access`、
+`sidebar.footer.action#claude-profile`、`conversation.input.left#claude-fingerprint`、品牌三处 slot）、
+crab 是否真的走到 `ctx.timeout`，以及宿主半边的六条路由是否注册。
+
+两点须知：它是**替身环境**，不是浏览器 —— 没有真 DOM，所以个别只为真浏览器而写的 effect
+会被标成 `(needs a real browser)` 而不是失败；它证明的是**接线**，界面观感仍以 §2.1 的
+GUI 清单为准。
+
 ## 6. 仓库布局
 
 ```
@@ -422,6 +442,7 @@ dsh-claude-glass/
 │     └─ qr.js               上游的手写 byte-mode QR 编码器（零依赖）
 ├─ tools/
 │  ├─ port-from-theme.mjs    §5.4 的再移植生成器（重跑即跟进上游）
+│  ├─ mount-smoke.mjs        §5.5 的动态挂载冒烟（替身 ctx/DOM 真执行产物）
 │  └─ toggle-repro/          §5.1 侧栏包含块缺陷的真 Electron 台架（真核心 CSS）
 │     ├─ main.js             `electron main.js <bundleA> <bundleB>`，输出 JSON 对照
 │     ├─ core-layout-css.txt 从 dsh-client-ui-layout 抽出的核心 CSS

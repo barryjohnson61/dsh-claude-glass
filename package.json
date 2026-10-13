@@ -11,8 +11,9 @@
   "scripts": {
     "build": "node build.mjs",
     "verify": "node verify.mjs dist/dsh-claude-glass/lib/client.js",
+    "smoke": "node tools/mount-smoke.mjs",
     "pack": "node pack.mjs",
-    "release": "node build.mjs && node verify.mjs dist/dsh-claude-glass/lib/client.js && node pack.mjs",
+    "release": "node build.mjs && node verify.mjs dist/dsh-claude-glass/lib/client.js && node tools/mount-smoke.mjs && node pack.mjs",
     "tokens": "node -e \"const t=require('./assets/claude-tokens.json');console.log(Object.keys(t).length,'tokens')\""
   },
   "keywords": [

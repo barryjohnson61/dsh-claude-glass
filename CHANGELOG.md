@@ -101,8 +101,14 @@ react                                  ^18.2.0
 
 - `verify.mjs` 新增：客户端 `timer` 声明、6 个移植插件身份（`dsh-claude-brand|glass|crab|font-switcher|lan-access|skin`）、
   `ctx.get("slots")` 残留为 0、宿主导出形状、`lib/` 三个模块齐全。
-- 静态校验**不能**证明彩蛋在真实输入框里触发、二维码能扫、螃蟹能挂上；
-  这些需要在 GUI 里实机确认（见 README §2.1 的验收清单）。
+- 新增 `tools/mount-smoke.mjs`（`npm run smoke`，也进了 `npm run release`）：这是**动态**校验，
+  用替身 `window.__ModuleLoader__` / `require` / `ctx` / DOM 真执行构建产物，断言 5 个移植半边
+  确实挂上（`settings.section#clawd`、`settings.section#fonts`、`sidebar.footer.action#lan-access`、
+  `sidebar.footer.action#claude-profile`、`conversation.input.left#claude-fingerprint`、品牌三处 slot）、
+  crab 确实调用 `ctx.timeout`，以及宿主六条路由确实注册。它在 CI 里能在没有 GUI 的情况下抓到
+  「半边没挂上」这类回归。
+- 动态校验也**不能**证明彩蛋在真实输入框里触发、二维码能扫、螃蟹能挂上；
+  这些仍需在 GUI 里实机确认（见 README §2.1 的验收清单）。
 
 ### 打包
 
