@@ -5,6 +5,10 @@
 
 一句话：**Claude 的颜色与版式，aqua 的玻璃与动画。**
 
+部署入口：[利用 AI Agent 部署指南](dsh-claude-glass-ai-agent-deployment-guide.md)。
+指南包含在本机 DeepSeek Harness 中准备部署，以及使用 Codex、Claude Desktop 或 Claude Code
+辅助安装到 Harness 的提示词、操作步骤、验收与回滚方法，并说明构建输入和运行时兼容性要求。
+
 ![浅色](shots/dsh-01-claude-glass.png)
 ![深色](shots/dsh-05-dark.jpg)
 
@@ -473,42 +477,60 @@ GUI 清单为准。
 
 ## 6. 仓库布局
 
-```
-dsh-claude-glass/
-├─ build.mjs                 构建脚本：解析两个上游输入 → 改写 aqua bundle → 生成整个包
-├─ verify.mjs                校验：字面量计数 + 两处侧栏回归守卫（必须传 bundle 路径）
-├─ pack.mjs                  打包：探测 pnpm/npm，出 tgz，可 --dest 投递
-├─ src/
-│  ├─ claude-layer.css       手写的 Claude 版式层（追加到 aqua 主样式表末尾）
-│  └─ port/                  从 dsh-claude-theme 移植的插件代码（生成物，已提交）
-│     ├─ PORT-MANIFEST.md    上游 commit + 每个文件的 sha256 与字节数
-│     ├─ brand.client.js     ├─ crab.client.js     ├─ font-switcher.client.js
-│     ├─ lan-access.client.js├─ skin-egg.client.js （彩蛋子集 + glass 自己的接线）
-│     ├─ client-mount.js     applyPortedThemePlugins：5 个客户端半边怎么挂
-│     ├─ host-mount.js       宿主半边怎么挂（splice 进 lib/index.js）
-│     ├─ lan-access.js       host 半边：状态/绑定/二维码三条路由
-│     ├─ font-switcher.js    host 半边：manifest/file/reveal 三条路由
-│     └─ qr.js               上游的手写 byte-mode QR 编码器（零依赖）
-├─ tools/
-│  ├─ port-from-theme.mjs    §5.4 的再移植生成器（重跑即跟进上游）
-│  ├─ mount-smoke.mjs        §5.5 的动态挂载冒烟（替身 ctx/DOM 真执行产物）
-│  ├─ break-render-binding.cjs §5.5 的“负面测试”：故意删掉绑定，证明守卫会红
-│  ├─ break-lan-portal.cjs   §5.5 的“负面测试”：故意把 portal 改回原地渲染
-│  └─ toggle-repro/          §5.1 侧栏包含块缺陷的真 Electron 台架（真核心 CSS）
-│     ├─ main.js             `electron main.js <bundleA> <bundleB>`，输出 JSON 对照
-│     ├─ core-layout-css.txt 从 dsh-client-ui-layout 抽出的核心 CSS
-│     └─ core-sidebar-css.txt 从 dsh-client-ui-sidebar 抽出的核心 CSS
-├─ licenses/
-│  └─ dsh-claude-theme.txt   MIT + SIL OFL 1.1 全文 + 四款字体署名
-├─ shots/                    README 用的截图
-├─ assets/
-│  └─ claude-tokens.json     从 skin.css 解析出的令牌表（生成物，已 gitignore）
-├─ CHANGELOG.md              依赖清单、上游既有修复、本插件的每一次改动
-├─ NOTICE                    四段式第三方声明
-├─ LICENSE                   AGPL-3.0-only 全文（= aqua 基线的许可原文）
-├─ dist/                     构建产物（已 gitignore）
-└─ package.json              仅用于装脚本，非发布包
-```
+### 6.1 已提交的文件
+
+以下路径均相对于仓库根目录，与当前 Git 跟踪的文件对应。`src/port/` 中的移植代码虽然由工具生成，
+但已提交到仓库；`client-mount.js` 和 `host-mount.js` 则是手写的挂载片段。
+
+| 路径 | 用途 |
+| --- | --- |
+| `.gitattributes` | 固定文本文件的 LF 换行规则 |
+| `.gitignore` | 排除构建产物、依赖及编辑器临时文件 |
+| `CHANGELOG.md` | 依赖清单、上游既有修复与本插件改动记录 |
+| `LICENSE` | AGPL-3.0-only 许可全文 |
+| `NOTICE` | 第三方来源与许可声明 |
+| `README.md` | 项目说明、安装、构建与验收入口 |
+| `build.mjs` | 解析两个上游输入、改写 Aqua bundle 并生成插件包目录 |
+| [dsh-claude-glass-ai-agent-deployment-guide.md](dsh-claude-glass-ai-agent-deployment-guide.md) | 利用 Harness、Codex 或 Claude 辅助部署的提示词与步骤 |
+| `licenses/dsh-claude-theme.txt` | MIT 与 SIL OFL 1.1 全文及四份字体署名 |
+| `pack.mjs` | 探测 pnpm/npm 并生成 tgz，支持 `--dest` 投递 |
+| `package.json` | 构建工程及脚本入口，不是最终发布包 |
+| `shots/dsh-01-claude-glass.png` | Claude Glass 界面截图 |
+| `shots/dsh-04-settings.jpg` | 设置界面截图 |
+| `shots/dsh-05-dark.jpg` | 深色界面截图 |
+| `shots/dsh-06-final-light.jpg` | 浅色界面截图 |
+| `shots/dsh-07-sidebar-fixed.jpg` | 侧栏修复截图 |
+| `src/claude-layer.css` | 追加到 Aqua 主样式表末尾的 Claude 版式层 |
+| `src/port/PORT-MANIFEST.md` | 移植来源提交、文件哈希与字节数 |
+| `src/port/brand.client.js` | 移植的客户端品牌替换功能 |
+| `src/port/client-mount.js` | 将五个客户端功能挂到 Glass 的 `apply()` |
+| `src/port/crab.client.js` | 移植的 Clawd 螃蟹挂件 |
+| `src/port/font-switcher.client.js` | 移植的字体切换客户端界面 |
+| `src/port/font-switcher.js` | 字体 manifest、file、reveal 宿主路由 |
+| `src/port/host-mount.js` | 拼入 `lib/index.js` 的宿主功能挂载片段 |
+| `src/port/lan-access.client.js` | 移植的手机访问客户端面板 |
+| `src/port/lan-access.js` | 局域网 status、bind、qr 宿主路由 |
+| `src/port/qr.js` | 零依赖的 byte-mode QR 编码器 |
+| `src/port/skin-egg.client.js` | 请求指纹彩蛋代码，实机触发尚未实现 |
+| `tools/break-lan-portal.cjs` | 故意破坏 portal，验证回归守卫能否检出 |
+| `tools/break-render-binding.cjs` | 故意删除渲染绑定，验证回归守卫能否检出 |
+| `tools/mount-smoke.mjs` | 使用替身 ctx/DOM 执行产物的动态挂载冒烟 |
+| `tools/port-from-theme.mjs` | 从上游主题重新生成移植代码与来源清单 |
+| `tools/toggle-repro/core-layout-css.txt` | 侧栏复现台架使用的核心布局 CSS |
+| `tools/toggle-repro/core-sidebar-css.txt` | 侧栏复现台架使用的核心侧栏 CSS |
+| `tools/toggle-repro/main.js` | 真 Electron 侧栏复现入口，输出对照 JSON |
+| `tools/toggle-repro/package.json` | Electron 复现台架的包配置 |
+| `verify.mjs` | 静态校验与回归守卫，必须传入 bundle 路径 |
+
+### 6.2 本地生成的文件
+
+以下内容由构建或打包生成，已被 `.gitignore` 排除，克隆仓库后不会自带：
+
+| 路径 | 生成方式与内容 |
+| --- | --- |
+| `assets/claude-tokens.json` | `build.mjs` 从上游 `claude/skin.css` 解析出的令牌表 |
+| `dist/dsh-claude-glass/` | `build.mjs` 生成的完整插件包目录 |
+| `dist/dsh-claude-glass/dsh-claude-glass-1.1.0.tgz` | `pack.mjs` 生成的当前版本安装包 |
 
 真正的发布包由 `build.mjs` 生成在 `dist/dsh-claude-glass/`，它的 `package.json`
 才带 `dsh.bundle.patch` / `dsh.client` 等 DSH 需要的字段。
