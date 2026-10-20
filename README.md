@@ -58,7 +58,7 @@
 **刻意没有做的事**（继承 claude-theme 踩过的坑）：不给 `tool-call` / `turn-process` / `workflow-run`
 加 `overflow:hidden`——这些节点承载工具输出与思考文本，裁切只会丢信息。
 
-### 2.1 移植自 dsh-claude-theme 的插件功能（1.1.0 新增）
+### 2.1 移植自 dsh-claude-theme 的插件功能（1.1.0 起；1.2.0 跟到上游 1017）
 
 上游把皮肤之外的实用功能都做成了**独立插件**；glass 把其中 5 个整体搬进来，
 内联进同一个 `lib/client.js`（外部依赖为零，不新增任何 npm 包）。其中 4 个实机可用；
@@ -68,8 +68,8 @@
 | 功能 | 怎么用 | 依赖的宿主服务 |
 | --- | --- | --- |
 | **请求指纹彩蛋** ⚠️ **未生效（按未移植处理）** | 代码在、`window.__claudeFootprint` 也在，但在输入框里打裸 `TZ=` **不会**弹面板：这一版 DSH 不把这个座位的草稿交给它。想手动看面板用 `window.__claudeFootprint.show()`。缺什么、从哪接，见 CHANGELOG 同名条目 | 无（纯客户端） |
-| **局域网访问** | 侧栏底部「手机访问」图标 → 面板显示本机 LAN 地址、端口、二维码与绑定开关（面板经 `react-dom` 的 portal 渲染到 `document.body`，不留在侧栏的包含块里） | `connection` + `webServer` |
-| **品牌替换** | 星形标记替换官方品牌位，同时改 `document.title` 与 favicon；偏好存 `localStorage: dsh-claude-brand.prefs` | 无 |
+| **局域网访问** | 侧栏底部「手机访问」图标 → 面板显示本机 LAN 地址、端口、二维码与绑定开关，并可**就地刷新**配对 URL（宿主每次启动换发 token，不必整页刷新）；面板经 `react-dom` 的 portal 渲染到 `document.body`，不留在侧栏的包含块里 | `connection` + `webServer` |
+| **品牌替换** | 星形标记替换官方品牌位，同时改 `document.title` 与 favicon；偏好存 `localStorage: dsh-claude-brand.prefs`。**1.2.0 起**侧栏底部头像气泡里多一条「加载动画」三选一（星芒 / 螃蟹 / 默认鲸尾，`iconStyle`）—— 上游把开关放在 skin 插件的 Claude-X 页，glass 不移植那张页，所以搬到了这里 | 无 |
 | **Clawd 螃蟹挂件** | 直接落在输入框卡片（`[data-composer-card]`）上的像素螃蟹，设置页 id `clawd` | `timer`（客户端） |
 | **字体切换** | 设置 → 字体（id `fonts`）：衬线 / 无衬线 / 等宽各选一组；切换后皮肤里所有字面量 token 自动跟随 | `connection`（客户端半边另需 host 路由） |
 
@@ -81,12 +81,17 @@
    触发链路缺什么、后人从哪里接上，写在 CHANGELOG「未移植：请求指纹彩蛋」。
 2. 侧栏底部出现「手机访问」，点开后状态/二维码都能出图（二维码用手机扫一下最稳）。
    面板应当浮在整个应用之上（它 portal 到 `document.body`），**不能**糊在侧栏里；反复点复选框
-   不应让侧栏变形。勾选后复选框可能立刻回到勾选态 —— 那是绑定已生效（宿主返回 `0.0.0.0`），
-   不是点击无效。
+   不应让侧栏变形。勾选后复选框可能立刻回到勾选态 —— 那是绑定已生效（宿主返回本机 LAN
+   地址），不是点击无效。
    勾上开关后它要写进**当前启动的那个 profile** 的 `cordis.patch.yml`
    （本机 = `%USERPROFILE%\.dsh\profiles\desktop\`；路径取自宿主的 `profileContext`，不再依赖
    `DSH_PROFILE`），并提示重启宿主才生效。若宿主没配置 LAN 绑定，这里应显示失败而不是白屏。
+   ⚠️ **托管行里必须是具体 IP，绝不能是 `0.0.0.0`** —— 宿主 0.2.1-rc.2 会拒绝通配地址，
+   而 `webserver` 是 required 插件，写错了整个 Harness 都起不来（见 §3 的升级警告）。
 3. 品牌位（侧栏顶部 + 新会话首屏）出现星形标记；窗口标题与 favicon 一起变。
+   点侧栏底部那行头像 → 气泡里除名字/副标题/头像外，多一条「加载动画」单选：
+   选「星芒」后「深度求索中」旁边是 Claude 的八形态轮播，选「螃蟹」是像素蟹走路，
+   选「默认」回到原来的蓝色鲸尾（值在 `dsh-claude-brand.prefs` 的 `iconStyle`）。
 4. 输入框卡片右下出现螃蟹；`localStorage` 里能看到 `dsh-claude-crab.prefs`。
 5. 设置 → 字体：三个角色切换后，正文（衬线）/ 外壳（无衬线）/ 代码（等宽）立刻变；
    刷新后仍保持。
@@ -100,10 +105,10 @@
 
 ```powershell
 # 1) 放进 profile 的 vendor 目录
-copy dsh-claude-glass-1.1.0.tgz "$env:USERPROFILE\.dsh\profiles\desktop\vendor\"
+copy dsh-claude-glass-1.2.0.tgz "$env:USERPROFILE\.dsh\profiles\desktop\vendor\"
 
 # 2) 解包到 node_modules
-tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.1.0.tgz" `
+tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.0.tgz" `
     -C "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-claude-glass" --strip-components=1
 ```
 
@@ -113,13 +118,22 @@ tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.1.0.t
 > 然后把 `pnpm-lock.yaml` 里 `dsh-claude-glass@file:vendor/…tgz` 那条的 `integrity` 换成新 tarball 的
 > （`sha512-` + base64 的 SHA-512），这样后续 `pnpm install` 才是干净的空操作。
 
+> ⚠️ **从 1.1.0 升级（或曾经开过「手机访问」）**：先看一眼 profile 的
+> `cordis.patch.yml`。1.1.0 会把托管块里的 `webserver` 绑到 `0.0.0.0`，而宿主
+> 0.2.1-rc.2 拒绝通配地址；`webserver` 是 required 插件，所以**整个 Harness 都起不来**
+> （`dsh: startup failed: 2 required plugins did not activate`，
+> 细节见 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*.log`）。
+> 升级前把 `# >>> dsh-lan-access bind >>>` 到 `# <<< dsh-lan-access bind <<<`
+> 之间的整段删掉，再重启；1.2.0 之后重新打开开关会写具体 LAN 地址，不会再出现这个块。
+> 另需注意：具体地址同样要「下次启动时存在」，换网络/DHCP 换了 IP 后请先关掉这个开关。
+
 然后编辑 `%USERPROFILE%\.dsh\profiles\desktop\package.json`：
 
 ```jsonc
 {
   "dependencies": {
     // 原来是 dsh-client-ui-aqua，换成这一行
-    "dsh-claude-glass": "file:vendor\\dsh-claude-glass-1.1.0.tgz"
+    "dsh-claude-glass": "file:vendor\\dsh-claude-glass-1.2.0.tgz"
   },
   "dsh": {
     "profile": {
@@ -157,7 +171,7 @@ tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.1.0.t
 | 输入 | 是什么 | 默认查找位置 |
 | --- | --- | --- |
 | `BASE` | `dsh-client-ui-aqua@1.3.1-patch.4`（含 `lib/client.js`） | `..\dsh-client-ui-aqua` |
-| `CLAUDE` | `dsh-claude-theme` 的 `claude/` 皮肤目录（含 `skin.css`） | `..\dsh-claude-theme\claude` |
+| `CLAUDE` | `dsh-claude-theme` 的 `claude/` 皮肤目录（含 `skin.css`）；1.2.0 的移植对应上游 `8dc9fb4`（1017），而这个目录自 1007 起未变 | `..\dsh-claude-theme\claude` |
 
 两种指定方式（任选其一）：
 
@@ -196,6 +210,9 @@ node pack.mjs --dest "$env:USERPROFILE\.dsh\profiles\desktop\vendor"   # 顺带�
 所以：
 
 - **不要让检出过程把行尾改成 CRLF**——`.gitattributes` 已固定 `* text=auto eol=lf`；
+- `src/port/*` 由生成器写、随上游带 CRLF（Windows 检出），而仓库按上一行存成 LF。
+  `build.mjs` 读这些文件时会把 CRLF 折成 LF，所以「刚跑完生成器的树」和「干净检出」
+  构建出的 bundle 逐字节相同（1.2.0 起）；不加这一步两者会差 6003 字节。
 - **不要手工编辑 `dist/`**——它每次构建都会被整目录重建；
 - 换 aqua 基线版本时锚点几乎必然失配，此时按 `BUILD PROBLEMS:` 报出的锚点原文更新
   `build.mjs` 里的常量即可（每条替换都自带 `expect=` 期望站点数，失配不会静默通过）。
@@ -418,6 +435,23 @@ git diff --stat src\port
 退出码：`0` 正常写出，`1` 上游结构漂移（wrapper 形状或 slice 锚点变了 —— 会打印
 `PORT PROBLEMS:` 并**拒绝**写出半截移植），`2` 参数用错。`--theme` 指向上游仓库根
 （不是 `claude/`；那个是 `build.mjs --claude` 的输入）。
+
+> **没有 `.git` 的上游树**：发行包、或 git 连不上 github.com 时用 GitHub contents API
+> 重建的检出，都没有 HEAD 可读，`PORT-MANIFEST.md` 会写 `unknown`。这时用
+> `--theme-commit <sha>`（或 `DSH_CLAUDE_THEME_COMMIT`）把上游 commit 显式传进来：
+>
+> ```powershell
+> node tools\port-from-theme.mjs --theme ..\dsh-claude-theme-1017 `
+>   --theme-commit 8dc9fb4e5d79bf0bfa9b01158d811bfdec21f96e
+> ```
+>
+> 1.2.0 就是这么生成的（1017『初雪霜银』= `8dc9fb4`）；树的 82 个 blob 已逐个与
+> GitHub tree API 的 sha 核对一致。
+
+生成器里现在有 **4 条改写**，每条都写进生成物头部、并且每个锚点都 `require1` 断言：
+`ctx.get("slots") -> ctx.slots`（五个客户端半边）、`lib/lan-access.js` 的 profile 解析、
+`lib/lan-access.js` 的绑定地址（**不再写 `0.0.0.0`**，宿主 0.2.1-rc.2 拒绝通配地址）、
+以及 `brand.client.js` 里补的那条「加载动画」三选一（上游放在 glass 不移植的 Claude-X 页）。
 
 `src/port/PORT-MANIFEST.md` 记录本次移植对应的上游 commit 与每个文件的 sha256 前 16 位，
 所以「这段 vendored 代码来源哪一版」永远可查。

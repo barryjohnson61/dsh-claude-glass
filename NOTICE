@@ -46,9 +46,17 @@ code of its own beyond the integration layer described in README.md.
                             plugins/lan-access/ (host routes + client panel + the
                             hand-written byte-mode QR encoder), brand-plugin/,
                             crab-plugin/, plugins/font-switcher/. Taken from
-                            upstream commit 20bfe79 (release 1007), same MIT
-                            license; src/port/PORT-MANIFEST.md records the exact
-                            revision and each file's hash.
+                            upstream commit 8dc9fb4 (release 1017『初雪霜银』),
+                            same MIT license; src/port/PORT-MANIFEST.md records
+                            the exact revision and each file's hash.
+
+  The running indicator's artwork (upstream release 1016『四时良辰』) is
+  redistributed inside brand-plugin/lib/client.js as embedded data, not as
+  files: Claude's eight Spark animations are inline SVG path data stepped with
+  CSS `steps()`, and the walking crab is a 43-frame 34x23 base64 PNG sprite.
+  The artwork is Anthropic's, used as a non-official fan homage; see section 4.
+  Either can be regenerated with upstream's scripts/gen-spark-data.py and
+  scripts/gen-clawd-sprite.py.
 
   The four font binaries are redistributed unmodified under the SIL Open Font
   License 1.1; see ./licenses/dsh-claude-theme.txt.

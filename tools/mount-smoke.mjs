@@ -643,14 +643,24 @@ if (status0) {
 }
 
 const enabled = await call("/api/dsh-lan-access/bind", "", post({ enabled: true }));
+/* The managed row must pin a CONCRETE interface address: dsh-host-webserver
+ * 0.2.1-rc.2 refuses a wildcard, and `webserver` is a required plugin, so a
+ * wildcard there is a boot failure, not a broken switch. The address is the
+ * stubbed machine's first LAN address, whatever the stub hands out. */
+const lanAddr = status0?.body?.addresses?.[0]?.address;
 if (enabled) {
   say(`  POST bind {enabled:true} -> ${enabled.status} pendingBind=${JSON.stringify(enabled.body?.pendingBind)} restartRequired=${enabled.body?.restartRequired}`);
-  if (enabled.body?.pendingBind !== "0.0.0.0") fail("turning the switch on did not pin 0.0.0.0");
+  if (typeof lanAddr !== "string") fail("the status route published no LAN address to bind");
+  if (enabled.body?.pendingBind !== lanAddr) fail(`turning the switch on pinned ${JSON.stringify(enabled.body?.pendingBind)}, expected the LAN address ${JSON.stringify(lanAddr)}`);
+  if (enabled.body?.pendingBind === "0.0.0.0") fail("turning the switch on pinned the wildcard 0.0.0.0 — the host refuses it and will not start");
   if (enabled.body?.restartRequired !== true) fail("turning the switch on did not report that a restart is required");
 }
 const written = existsSync(livePatch) ? readFileSync(livePatch, "utf8") : "";
-for (const needle of ["# >>> dsh-lan-access bind >>>", "host: '0.0.0.0'", "port: 19387", "compression: gzip", SENTINEL.trim()]) {
+for (const needle of ["# >>> dsh-lan-access bind >>>", `host: '${lanAddr}'`, "port: 19387", "compression: gzip", SENTINEL.trim()]) {
   if (!written.includes(needle)) fail(`the managed block is missing ${JSON.stringify(needle)}`);
+}
+if (/host:\s*["']?0\.0\.0\.0/.test(written)) {
+  fail("the managed block still pins a wildcard bind — dsh-host-webserver 0.2.1-rc.2 refuses it and the Harness will not start");
 }
 if (existsSync(fallbackPatch)) {
   fail(`the switch wrote ${fallbackPatch} — the environment fallback won over the Host's profileContext (that is the desktop-profile bug)`);
@@ -662,7 +672,7 @@ const bad = await call("/api/dsh-lan-access/bind", "", post({ enabled: "yes" }))
 if (bad && bad.status !== 400) fail(`a non-boolean "enabled" was answered ${bad.status}, expected 400`);
 
 const status1 = await call("/api/dsh-lan-access/status");
-if (status1 && status1.body?.pendingBind !== "0.0.0.0") fail("the status route did not remember the pending bind");
+if (status1 && status1.body?.pendingBind !== lanAddr) fail(`the status route did not remember the pending bind (${JSON.stringify(status1.body?.pendingBind)} != ${JSON.stringify(lanAddr)})`);
 
 const disabled = await call("/api/dsh-lan-access/bind", "", post({ enabled: false }));
 if (disabled) {
@@ -703,3 +713,8 @@ if (problems.length) {
   process.exit(1);
 }
 console.log("\nmount smoke ok");
+/* Leave explicitly: the mounted halves keep timers alive on purpose (the
+ * running-label ticker and the crab's ctx.timeout), so falling off the end of
+ * the script would keep the Node process — and `npm run release` — hanging
+ * after a green run. The failure path above already exits with 1. */
+process.exit(0);

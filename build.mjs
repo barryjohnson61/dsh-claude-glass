@@ -51,7 +51,7 @@ import { fileURLToPath } from "node:url";
 
 const PKG = "dsh-claude-glass";
 const OLD_PKG = "dsh-client-ui-aqua";
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const OUT = join(ROOT, "dist", PKG);
@@ -560,7 +560,14 @@ const PORT_HOST = ["lan-access.js", "qr.js", "font-switcher.js"];
   const ported = PORT_CLIENT.map(
     (f) =>
       `\n\n/* ===== src/port/${f} ===== */\n` +
-      readFileSync(join(ROOT, "src", "port", f), "utf8").replace(/\s*$/, ""),
+      readFileSync(join(ROOT, "src", "port", f), "utf8")
+        // The repository stores these files as LF (.gitattributes: `* text=auto
+        // eol=lf`), but the generator copies upstream text, which checks out as
+        // CRLF on Windows. Normalising here keeps the bundle a function of the
+        // committed sources: a fresh checkout and a freshly ported tree build to
+        // the same bytes.
+        .replace(/\r\n/g, "\n")
+        .replace(/\s*$/, ""),
   ).join("");
   src = substitute(
     src,
@@ -640,7 +647,7 @@ writeFileSync(join(OUT, "package.json"), JSON.stringify({
   repository: { type: "git", url: "git+https://github.com/barryjohnson61/dsh-claude-glass.git" },
   dshCompatPatch: {
     by: "dsh-claude-glass build.mjs",
-    forRuntime: "0.2.0-rc.2",
+    forRuntime: "0.2.1-rc.2",
     base: `${OLD_PKG}@${basePkg.version}`,
     changes: [
       `AQUA_TOKEN_OVERRIDES -> ${pairs.length} Claude --dsw-* tokens parsed from dsh-claude-theme/claude/skin.css`,
@@ -658,6 +665,9 @@ writeFileSync(join(OUT, "package.json"), JSON.stringify({
       "ported dsh-claude-theme 20bfe79's five sidecar plugins into lib/client.js -- the TZ= request-fingerprint egg, LAN access (host routes + sidebar panel + QR), the Claude brand chrome, the Clawd crab and the font switcher. Lifted verbatim into src/port/ by tools/port-from-theme.mjs, concatenated into the factory body, and mounted from glass's own apply()",
       "lib/index.js also mounts the two ported host halves that own routes: dsh-lan-access and dsh-font-switcher, published as lib/lan-access.js, lib/qr.js and lib/font-switcher.js (all three whitelisted in package.json files[])",
       "package.json dsh.client.inject gains @deepseek-ai/dsh-client-ui-renderer, -conversation and -sidebar: the client services the ported halves declared for themselves upstream",
+      "ported theme bumped 20bfe79 (1007『火山晨曦』) -> 8dc9fb4 (1017『初雪霜银』): the brand plugin's three-way running-icon switch (Spark loops / walking crab / shipped whale, preference iconStyle in dsh-claude-brand.prefs), the LAN panel's manual URL refresh button, and the skin plugin's ICON_STYLES declaration. claude/ and the other four halves are byte-identical between the two releases",
+      "the running-icon switch is mounted from the sidebar-foot popover, not from the skin plugin's Claude-X page: glass does not port that page, and the preference would otherwise be write-only (spark is the shipped default, with no way back to the whale)",
+      "LAN access: the managed cordis.patch.yml row pins the machine's concrete LAN address instead of host '0.0.0.0'. dsh-host-webserver 0.2.1-rc.2 REFUSES a wildcard bind ('binding every interface would expose remote code execution to the network'), and webserver is a required plugin -- so a stale wildcard row does not break the panel, it stops the whole Harness from starting with '2 required plugins did not activate'. writeBind() now resolves lanAddresses()[0] and throws when there is none, and the panel's reachable flag tests 'not loopback' instead of 'is 0.0.0.0'",
     ],
   },
   // npm auto-includes LICENSE and README.md but NOT NOTICE, so list it explicitly.

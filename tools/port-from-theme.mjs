@@ -27,6 +27,9 @@
  *
  *   ctx.get("slots") -> ctx.slots        (all five client halves)
  *   the managed patch file's resolution  (lib/lan-access.js)
+ *   the managed row's bind host          (lib/lan-access.js, since 1.2.0)
+ *   the icon-style switch's home         (brand.client.js, since 1.2.0)
+ *   the egg watcher's draft source       (skin-egg.client.js)
  *
  * glass's client context injects `slots` directly — aqua's bundle has always
  * read it as `ctx.slots` — so the theme's defensive `ctx.get` lookup is
@@ -41,6 +44,17 @@
  * Host publishes the launched profile on its `profileContext` service, so the
  * rewrite consults that first and keeps the environment as the fallback.
  *
+ * The third is the one that matters most: upstream's managed row pins
+ * `host: '0.0.0.0'`, and dsh-host-webserver 0.2.1-rc.2 refuses a wildcard bind.
+ * `webserver` is a required plugin, so a stale row does not break the LAN panel
+ * — it stops the whole Harness from starting. Since 1.2.0 the row carries the
+ * machine's concrete LAN address instead.
+ *
+ * The fourth is a port seam, not a bug fix: upstream 1016 put the running-icon
+ * switch (Spark / crab / whale) on the skin plugin's Claude-X page, and glass
+ * does not port that page. The brand popover carries the row instead, so the
+ * preference is not write-only.
+ *
  * Only `plugins/skin` is a subset: its client half is a skin loader plus the
  * easter egg, and glass already owns its stylesheet and its appearance
  * section, so just the egg is taken (everything from `EGG_STORE` down to
@@ -51,6 +65,15 @@
  * plus `git diff`, rather than a manual re-read of 200 KB:
  *
  *   node tools/port-from-theme.mjs --theme ../dsh-claude-theme
+ *
+ * A tree that arrives WITHOUT its `.git` (a release archive, or a checkout
+ * rebuilt from the GitHub contents API when git cannot reach github.com) has no
+ * HEAD to read, and the manifest would then say `unknown`. `--theme-commit`
+ * (or DSH_CLAUDE_THEME_COMMIT) supplies the sha the tree represents, so the
+ * provenance survives:
+ *
+ *   node tools/port-from-theme.mjs --theme ../dsh-claude-theme-1017 \
+ *     --theme-commit 8dc9fb4e5d79bf0bfa9b01158d811bfdec21f96e
  *
  * Exit codes: 0 written, 1 an anchor moved or a source is missing, 2 bad usage.
  */
@@ -75,7 +98,26 @@ function arg(flag) {
   return resolve(v);
 }
 
+/** A plain string argument — a commit sha, not a path. */
+function argValue(flag) {
+  const i = process.argv.indexOf("--" + flag);
+  if (i < 0) return undefined;
+  const v = process.argv[i + 1];
+  if (v === undefined || v.startsWith("--")) {
+    console.error(`--${flag} needs a value`);
+    process.exit(2);
+  }
+  return v.trim();
+}
+
 const THEME = arg("theme") ?? resolve(process.env.DSH_CLAUDE_THEME_ROOT ?? join(ROOT, "..", "dsh-claude-theme"));
+
+/* See the header: a tree without .git still has to record its upstream commit. */
+const THEME_COMMIT = argValue("theme-commit") ?? process.env.DSH_CLAUDE_THEME_COMMIT ?? "";
+if (THEME_COMMIT !== "" && !/^[0-9a-f]{7,40}$/i.test(THEME_COMMIT)) {
+  console.error(`--theme-commit expects a hex sha, got "${THEME_COMMIT}"`);
+  process.exit(2);
+}
 
 if (!existsSync(join(THEME, "plugins", "skin", "lib", "client.js"))) {
   console.error(
@@ -106,6 +148,8 @@ function sha(text) {
 
 /** The upstream commit, if the input happens to be a git checkout. */
 function upstreamCommit() {
+  /* An explicit sha wins: it is the only source when the tree has no .git. */
+  if (THEME_COMMIT !== "") return THEME_COMMIT.toLowerCase().slice(0, 7);
   try {
     /* A linked worktree (`git worktree add`) keeps .git as a file pointing at
      * the real gitdir, so follow that first. */
@@ -197,6 +241,127 @@ function portClient(rel, label, varName) {
   manifest.push([`${label}.client.js`, rel, text, Buffer.byteLength(out, "utf8")]);
 }
 
+/* ---------------------------------------- brand: the running-icon switch row */
+
+/**
+ * Upstream 1016 («初雪霜银» 的前一站 1016『四时良辰』) made the icon beside
+ * `深度求索中` a three-way choice — Claude's eight Spark loops, the walking
+ * pixel crab, or the shipped whale — stored in `dsh-claude-brand.prefs` as
+ * `iconStyle`, and put the switch on the SKIN plugin's Claude-X settings page.
+ *
+ * glass deliberately does not port that page (it is the other skin's appearance
+ * surface, and glass owns its own), so without a row of its own the preference
+ * would be write-only: the shipped default `spark` would apply and there would
+ * be no way back to the whale. Upstream already reasons exactly this way about
+ * `showProfile` in the brand plugin's sidebar-foot popover ("with only the
+ * brand plugin installed this popover is the only way back once the row is
+ * gone"), so the icon switch lands beside it: same three values, same
+ * `writePrefs`, same labels as the Claude-X page. The CSS is a separate block
+ * because `.dcb-pop-*` never had a radio row before.
+ */
+const BRAND_ICON_ANCHOR = [
+  "\t\t\t\t\th(",
+  '\t\t\t\t\t\t"label",',
+  '\t\t\t\t\t\t{ className: "dcb-pop-toggle" },',
+  '\t\t\t\t\t\th("input", {',
+  '\t\t\t\t\t\t\ttype: "checkbox",',
+  "\t\t\t\t\t\t\tchecked: prefs.showProfile !== false,",
+  "\t\t\t\t\t\t\tonChange: function (e) { writePrefs({ showProfile: e.target.checked }); },",
+  "\t\t\t\t\t\t}),",
+  '\t\t\t\t\t\th("span", null, "显示侧栏底部那行"),',
+  "\t\t\t\t\t),",
+].join("\n");
+
+const BRAND_ICON_FIXED = [
+  BRAND_ICON_ANCHOR,
+  "",
+  "\t\t\t\t\t/* glass: upstream keeps this switch on the skin plugin's",
+  "\t\t\t\t\t * Claude-X page, which glass does not port, so the popover",
+  "\t\t\t\t\t * carries the row — the same reasoning as the showProfile",
+  "\t\t\t\t\t * checkbox above. */",
+  "\t\t\t\t\th(",
+  '\t\t\t\t\t\t"div",',
+  '\t\t\t\t\t\t{ className: "dcb-pop-choices" },',
+  '\t\t\t\t\t\th("span", null, "加载动画"),',
+  "\t\t\t\t\t\th(",
+  '\t\t\t\t\t\t\t"div",',
+  '\t\t\t\t\t\t\t{ className: "dcb-pop-choicerow" },',
+  "\t\t\t\t\t\t\t[",
+  '\t\t\t\t\t\t\t\t{ id: "spark", label: "星芒", hint: "Claude 的八种形态轮播" },',
+  '\t\t\t\t\t\t\t\t{ id: "crab", label: "螃蟹", hint: "敲键盘的像素蟹" },',
+  '\t\t\t\t\t\t\t\t{ id: "off", label: "默认", hint: "保留原来的蓝色鲸尾" },',
+  "\t\t\t\t\t\t\t].map(function (opt) {",
+  "\t\t\t\t\t\t\t\treturn h(",
+  '\t\t\t\t\t\t\t\t\t"label",',
+  "\t\t\t\t\t\t\t\t\t{ className: \"dcb-pop-choice\", key: opt.id, title: opt.hint },",
+  '\t\t\t\t\t\t\t\t\th("input", {',
+  '\t\t\t\t\t\t\t\t\t\ttype: "radio",',
+  '\t\t\t\t\t\t\t\t\t\tname: "dcb-icon-style",',
+  '\t\t\t\t\t\t\t\t\t\tchecked: (prefs.iconStyle || "spark") === opt.id,',
+  "\t\t\t\t\t\t\t\t\t\tonChange: function () { writePrefs({ iconStyle: opt.id }); },",
+  "\t\t\t\t\t\t\t\t\t}),",
+  '\t\t\t\t\t\t\t\t\th("span", null, opt.label),',
+  "\t\t\t\t\t\t\t\t);",
+  "\t\t\t\t\t\t\t}),",
+  "\t\t\t\t\t\t),",
+  "\t\t\t\t\t),",
+].join("\n");
+
+/** The row's stylesheet, kept out of upstream's `CSS` array on purpose. */
+const BRAND_ICON_CSS = [
+  "\t\t/* glass: the icon-style row added to the sidebar-foot popover (the",
+  "\t\t * switch upstream keeps on the skin plugin's Claude-X page). */",
+  "\t\tvar GLASS_ICON_CSS = [",
+  '\t\t\t".dcb-pop-choices{display:flex;flex-direction:column;gap:6px;margin-top:2px}",',
+  '\t\t\t".dcb-pop-choices>span{font-size:12px;color:var(--dsw-alias-label-secondary)}",',
+  '\t\t\t".dcb-pop-choicerow{display:flex;flex-wrap:wrap;gap:14px}",',
+  '\t\t\t".dcb-pop-choice{display:flex;align-items:center;gap:6px;font-size:13px;",',
+  '\t\t\t"color:var(--dsw-alias-label-primary);cursor:pointer}",',
+  '\t\t\t".dcb-pop-choice input{accent-color:var(--dsw-alias-brand-primary);cursor:pointer}",',
+  '\t\t].join("");',
+  "",
+  "",
+].join("\n");
+
+const BRAND_ICON_NOTE =
+  `Rewritten: the icon-style switch (upstream 1016) is added to the sidebar-foot\n` +
+  `           popover. Upstream puts it on the skin plugin's Claude-X page, and\n` +
+  `           glass does not port that page, so the preference would otherwise\n` +
+  `           be write-only: "spark" would apply and there would be no way back\n` +
+  `           to the shipped whale.`;
+
+function portBrand() {
+  const rel = "brand-plugin/lib/client.js";
+  const label = "brand";
+  const text = read(rel, label);
+  if (text === "") return;
+  const body = factoryBody(text, label);
+  if (body === "") return;
+  const eol = body.includes("\r\n") ? "\r\n" : "\n";
+  require1(body, 'ctx.get("slots")', label);
+  const iconAnchor = BRAND_ICON_ANCHOR.split("\n").join(eol);
+  const iconOk = require1(body, iconAnchor, label);
+  const applyAnchor = "\t\tfunction apply(ctx) {";
+  const applyOk = require1(body, applyAnchor, label);
+  const styleAnchor = "\t\t\tel.textContent = CSS;";
+  const styleOk = require1(body, styleAnchor, label);
+
+  let rewritten = body.split('ctx.get("slots")').join("ctx.slots");
+  if (iconOk) rewritten = rewritten.replace(iconAnchor, BRAND_ICON_FIXED.split("\n").join(eol));
+  if (applyOk) rewritten = rewritten.replace(applyAnchor, BRAND_ICON_CSS.split("\n").join(eol) + applyAnchor);
+  if (styleOk) rewritten = rewritten.replace(styleAnchor, "\t\t\tel.textContent = CSS + GLASS_ICON_CSS;");
+  requireAny(rewritten, "GLASS_ICON_CSS", label);
+  requireAny(rewritten, "dcb-icon-style", label);
+
+  const out =
+    HEADER(rel, text, `${REWRITE_NOTE}\n${BRAND_ICON_NOTE}`) +
+    `\nconst portBrand = (function () {\n` +
+    rewritten.replace(/\s*$/, "\n") +
+    `})();\n`;
+  writeFileSync(join(OUT, `${label}.client.js`), out, "utf8");
+  manifest.push([`${label}.client.js`, rel, text, Buffer.byteLength(out, "utf8")]);
+}
+
 /* ------------------------------------- lan-access client: the dialog portal */
 
 /**
@@ -273,6 +438,45 @@ const LAN_CLIENT_PORTAL_NOTE =
   `           fixed-position scrim covered the sidebar's own chrome instead of\n` +
   `           the viewport.`;
 
+/*
+ * The panel's switch state, translated to the host's new bind.
+ *
+ * Upstream decides "LAN access is on" by `info.bindHost === "0.0.0.0"`, and
+ * reads the same wildcard out of `pendingBind` for its two restart hints. Once
+ * the host half pins a concrete interface address (see LAN_WILDCARD_NOTE) those
+ * comparisons are never true again: the switch would read OFF while LAN access
+ * is on, and the "restart to apply" hints would never appear. "On" is "the bind
+ * is not loopback", and "pending" is "a non-loopback address is recorded".
+ */
+const LAN_CLIENT_ENABLED_ANCHOR = `\t\t\t\tvar enabled = info.bindHost === "0.0.0.0";`;
+
+const LAN_CLIENT_ENABLED_FIXED = [
+  "\t\t\t\t/* glass: the managed row pins a concrete interface address now,",
+  "\t\t\t\t * so \"on\" means \"not loopback\" and \"pending\" means \"a",
+  "\t\t\t\t * non-loopback address is recorded\". */",
+  '\t\t\t\tvar loopback = info.loopback === true || info.bindHost === "127.0.0.1" ||',
+  '\t\t\t\t\tinfo.bindHost === "localhost" || info.bindHost === "::1";',
+  '\t\t\t\tvar pendingLan = typeof info.pendingBind === "string" && info.pendingBind !== "" &&',
+  '\t\t\t\t\tinfo.pendingBind !== "127.0.0.1" && info.pendingBind !== "localhost" &&',
+  '\t\t\t\t\tinfo.pendingBind !== "::1";',
+  "\t\t\t\tvar enabled = !loopback;",
+].join("\n");
+
+const LAN_CLIENT_PENDING_ANCHOR = `\t\t\t\tif (info.loopback && info.pendingBind === "0.0.0.0") {`;
+const LAN_CLIENT_PENDING_FIXED = `\t\t\t\tif (loopback && pendingLan) {`;
+
+const LAN_CLIENT_OFF_ANCHOR = `\t\t\t\tif (!info.loopback && info.pendingBind !== "0.0.0.0") {`;
+const LAN_CLIENT_OFF_FIXED = `\t\t\t\tif (!loopback && !pendingLan) {`;
+
+const LAN_CLIENT_WARN_ANCHOR = `\t\t\t\tif (enabled || info.pendingBind === "0.0.0.0") {`;
+const LAN_CLIENT_WARN_FIXED = `\t\t\t\tif (enabled || pendingLan) {`;
+
+const LAN_CLIENT_STATE_NOTE =
+  `Rewritten: the panel decides "LAN on" by "the bind is not loopback" and\n` +
+  `           "pending" by "a non-loopback address is recorded", instead of\n` +
+  `           comparing both against the wildcard 0.0.0.0 -- see LAN_WILDCARD_NOTE\n` +
+  `           (the host half no longer writes a wildcard).`;
+
 function portLanAccessClient() {
   const rel = "plugins/lan-access/lib/client.js";
   const label = "lan-access";
@@ -289,8 +493,23 @@ function portLanAccessClient() {
   if (bindOk) rewritten = rewritten.replace(LAN_CLIENT_BIND_ANCHOR, LAN_CLIENT_BIND_FIXED.split("\n").join(eol));
   if (portalOk) rewritten = rewritten.replace(portalAnchor, LAN_CLIENT_PORTAL_FIXED.split("\n").join(eol));
   require1(rewritten, "clgPortal(scrim, document.body)", label);
+
+  /* The panel's own wildcard comparisons — see LAN_CLIENT_STATE_NOTE. */
+  for (const [anchor, fixed] of [
+    [LAN_CLIENT_ENABLED_ANCHOR, LAN_CLIENT_ENABLED_FIXED],
+    [LAN_CLIENT_PENDING_ANCHOR, LAN_CLIENT_PENDING_FIXED],
+    [LAN_CLIENT_OFF_ANCHOR, LAN_CLIENT_OFF_FIXED],
+    [LAN_CLIENT_WARN_ANCHOR, LAN_CLIENT_WARN_FIXED],
+  ]) {
+    if (require1(rewritten, anchor, label)) {
+      rewritten = rewritten.replace(anchor, fixed.split("\n").join(eol));
+    }
+  }
+  requireAny(rewritten, "var pendingLan =", label);
+  require1(rewritten, "var enabled = !loopback;", label);
+
   const out =
-    HEADER(rel, text, `${REWRITE_NOTE}\n${LAN_CLIENT_PORTAL_NOTE}`) +
+    HEADER(rel, text, `${REWRITE_NOTE}\n${LAN_CLIENT_PORTAL_NOTE}\n${LAN_CLIENT_STATE_NOTE}`) +
     `\nconst portLanAccess = (function () {\n` +
     rewritten.replace(/\s*$/, "\n") +
     `})();\n`;
@@ -657,6 +876,74 @@ function launchedProfilePatch() {
 
 const LAN_APPLY_ANCHOR = `export function apply(ctx) {`;
 
+/* -------------------------------------------- lan-access host: no wildcard */
+/*
+ * Upstream's `writeBind()` pins `host: '0.0.0.0'`. That was legal when 1.1.0
+ * shipped, and it is not any more: dsh-host-webserver 0.2.1-rc.2 validates the
+ * field and refuses a wildcard ("binding every interface would expose remote
+ * code execution to the network"). The failure is far worse than a dead switch
+ * — `webserver` is a REQUIRED host plugin, so activation fails and the whole
+ * Harness refuses to start with "2 required plugins did not activate", which is
+ * exactly the fault the 1.2.0 release exists to fix.
+ *
+ * A concrete interface address keeps the feature's promise (a phone on the same
+ * LAN can reach the port) while never naming a wildcard, so the managed row
+ * cannot brick the next boot.
+ */
+const LAN_HOST_DOC_ANCHOR = ` * @param allInterfaces - true to pin \`0.0.0.0\`, false to remove the block and
+ *   fall back to the shipped row.`;
+
+const LAN_HOST_DOC_FIXED = ` * @param allInterfaces - true to pin this machine's LAN address (glass: the
+ *   Host refuses a wildcard bind — see \`lanBindHost\`), false to remove the
+ *   block and fall back to the shipped row.`;
+
+const LAN_WRITEBIND_ANCHOR = `export function writeBind(allInterfaces, port = DEFAULT_PORT) {`;
+
+const LAN_WRITEBIND_FIXED = `/**
+ * glass: the interface address the managed row pins.
+ *
+ * dsh-host-webserver 0.2.1-rc.2 refuses a wildcard bind outright ("binding every
+ * interface would expose remote code execution to the network"), and a refused
+ * row makes a REQUIRED plugin fail to activate — the whole host then refuses to
+ * start, not just this panel. Upstream pins \`0.0.0.0\` because it is the one
+ * value reachable from every interface; a concrete LAN address keeps the
+ * feature's promise for the phone on the same network without naming a
+ * wildcard, so the managed row can never brick the next boot.
+ *
+ * Throws when the machine has no LAN address: writing the block anyway would
+ * claim LAN access is on while nothing is reachable.
+ */
+function lanBindHost() {
+  const addresses = lanAddresses();
+  if (addresses.length === 0) {
+    throw new Error("no LAN address to bind: this machine has no non-internal IPv4 interface");
+  }
+  return addresses[0].address;
+}
+
+export function writeBind(allInterfaces, port = DEFAULT_PORT) {
+  /* glass: resolved before the block is built, so the managed row never
+   * carries a wildcard. */
+  const bindHost = allInterfaces ? lanBindHost() : "127.0.0.1";`;
+
+const LAN_HOST_LINE_ANCHOR = `      "    host: '0.0.0.0'",`;
+const LAN_HOST_LINE_FIXED = `      "    host: '" + bindHost + "',",`;
+
+const LAN_RETURN_ANCHOR = `  return allInterfaces ? "0.0.0.0" : "127.0.0.1";`;
+const LAN_RETURN_FIXED = `  return allInterfaces ? bindHost : "127.0.0.1";`;
+
+const LAN_REACHABLE_ANCHOR = `  const reachable = host === "0.0.0.0" && addresses.length > 0;`;
+const LAN_REACHABLE_FIXED = `  /* glass: the managed row pins a concrete interface address now, so loopback
+   * is the only bind the LAN cannot reach. */
+  const reachable =
+    host !== "127.0.0.1" && host !== "localhost" && host !== "::1" && addresses.length > 0;`;
+
+const LAN_WILDCARD_NOTE =
+  `Rewritten: the managed row pins the machine's LAN address instead of\n` +
+  `           \`0.0.0.0\`. dsh-host-webserver 0.2.1-rc.2 refuses a wildcard bind\n` +
+  `           and \`webserver\` is a required plugin, so a stale wildcard row stops\n` +
+  `           the whole Harness from starting (not just this panel).`;
+
 const LAN_PATCH_NOTE =
   `Rewritten: the managed patch file is taken from the Host's \`profileContext\`\n` +
   `(name/dir/patchPath) instead of \`DSH_PROFILE\` alone, and \`apply()\` calls\n` +
@@ -689,8 +976,32 @@ function portLanAccessHost() {
   let out = text;
   if (patchOk) out = out.replace(patchAnchor, LAN_PATCH_FIXED.split("\n").join(eol));
   if (applyOk) out = out.replace(LAN_APPLY_ANCHOR, `${LAN_APPLY_ANCHOR}${eol}  learnProfile(ctx);`);
+
+  /* The wildcard bind, in the four places it appears (see LAN_WILDCARD_NOTE). */
+  const docAnchor = LAN_HOST_DOC_ANCHOR.split("\n").join(eol);
+  const docOk = require1(out, docAnchor, label);
+  if (docOk) out = out.replace(docAnchor, LAN_HOST_DOC_FIXED.split("\n").join(eol));
+  if (require1(out, LAN_WRITEBIND_ANCHOR, label)) {
+    out = out.replace(LAN_WRITEBIND_ANCHOR, LAN_WRITEBIND_FIXED.split("\n").join(eol));
+  }
+  if (require1(out, LAN_HOST_LINE_ANCHOR, label)) {
+    out = out.replace(LAN_HOST_LINE_ANCHOR, LAN_HOST_LINE_FIXED);
+  }
+  if (require1(out, LAN_RETURN_ANCHOR, label)) {
+    out = out.replace(LAN_RETURN_ANCHOR, LAN_RETURN_FIXED);
+  }
+  if (require1(out, LAN_REACHABLE_ANCHOR, label)) {
+    out = out.replace(LAN_REACHABLE_ANCHOR, LAN_REACHABLE_FIXED.split("\n").join(eol));
+  }
+  requireAny(out, "lanBindHost()", label);
+  /* The wildcard must be gone from the code; the prose that explains WHY may
+   * still mention it, so check the value form only. */
+  if (/\b0\.0\.0\.0\b/.test(out.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\//g, ""))) {
+    problems.push(`${label}: a wildcard bind is still written outside the comments`);
+  }
+
   const file = "lan-access.js";
-  const body = HEADER(rel, text, LAN_PATCH_NOTE) + "\n" + out;
+  const body = HEADER(rel, text, `${LAN_PATCH_NOTE}\n${LAN_WILDCARD_NOTE}`) + "\n" + out;
   writeFileSync(join(OUT, file), body, "utf8");
   manifest.push([file, rel, text, Buffer.byteLength(body, "utf8")]);
 }
@@ -699,7 +1010,7 @@ function portLanAccessHost() {
 
 mkdirSync(OUT, { recursive: true });
 
-portClient("brand-plugin/lib/client.js", "brand", "portBrand");
+portBrand();
 portClient("crab-plugin/lib/client.js", "crab", "portCrab");
 portClient("plugins/font-switcher/lib/client.js", "font-switcher", "portFontSwitcher");
 portLanAccessClient();
@@ -726,10 +1037,14 @@ const MANIFEST =
   `\n\n` +
   `\`brand.client.js\`, \`crab.client.js\`, \`font-switcher.client.js\` and\n` +
   `\`lan-access.client.js\` are whole factory bodies. \`skin-egg.client.js\` is a\n` +
-  `subset of \`plugins/skin/lib/client.js\` — see its header. Two rewrites, each\n` +
+  `subset of \`plugins/skin/lib/client.js\` — see its header. Four rewrites, each\n` +
   `recorded in the header of the file it touches: \`ctx.get("slots") ->\n` +
-  `ctx.slots\` in all five client halves, and \`lib/lan-access.js\`'s profile\n` +
-  `resolution, whose upstream form wrote \`profiles/web\` on the desktop client.\n\n` +
+  `ctx.slots\` in all five client halves; \`lib/lan-access.js\`'s profile\n` +
+  `resolution, whose upstream form wrote \`profiles/web\` on the desktop client;\n` +
+  `its managed row's bind host, which upstream pinned to \`0.0.0.0\` — refused by\n` +
+  `dsh-host-webserver 0.2.1-rc.2, and fatal because \`webserver\` is required;\n` +
+  `and \`brand.client.js\`, which carries the 1016 running-icon switch in the\n` +
+  `sidebar-foot popover because glass does not port the skin plugin's page.\n\n` +
   `\`client-mount.js\` and \`host-mount.js\` are NOT generated, and they are not\n` +
   `modules either: they are the two fragments glass splices into the built\n` +
   `bundle, and they are what actually mounts these halves.\n`;

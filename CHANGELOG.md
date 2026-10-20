@@ -18,7 +18,8 @@
 | 名字 | 版本 | 用途 | 许可 |
 | --- | --- | --- | --- |
 | `dsh-client-ui-aqua` | `1.3.1-patch.4` | 玻璃材质 / 动效引擎 / 设置界面 / 运行期代码（**预构建 bundle，无 TS 源码**） | AGPL-3.0-only |
-| `dsh-claude-theme` 的 `claude/` | 随上游 HEAD | 278 个 `--dsw-*` 令牌、排版阶梯、版式语言、四份 woff2 | MIT + SIL OFL 1.1 |
+| `dsh-claude-theme` 的 `claude/` | 随上游 HEAD（1007→1017 **未变**） | 278 个 `--dsw-*` 令牌、排版阶梯、版式语言、四份 woff2 | MIT + SIL OFL 1.1 |
+| `dsh-claude-theme` 的 `plugins/`、`brand-plugin/`、`crab-plugin/` | `8dc9fb4`（1017『初雪霜银』，自 1.2.0 起） | 移植进 `lib/client.js` 的五个插件半边 | MIT |
 
 用 `--base` / `--claude`，或 `DSH_AQUA_BASE` / `DSH_CLAUDE_THEME` 指定；详见 README §5。
 
@@ -48,7 +49,133 @@
 react                                  ^18.2.0
 ```
 
-针对的 DSH 运行时：**0.2.0-rc.2**（`dshCompatPatch.forRuntime`）。
+针对的 DSH 运行时：**0.2.1-rc.2**（`dshCompatPatch.forRuntime`；1.1.0 写的是 0.2.0-rc.2，
+同一批兼容补丁在 0.2.1-rc.2 上仍然成立。0.2.1-rc.2 新增了 `webserver` 的地址校验，
+本版为此改掉了移植过来的局域网托管行，见 1.2.0 段）。
+
+---
+
+## [1.2.0] — 2026-10-20
+
+把 `dsh-claude-theme` **发行版 1017『初雪霜银』**（commit `8dc9fb4`，2026-10-16）相对
+1.1.0 所用 1007『火山晨曦』（`20bfe79`，2026-10-07）的两个提交移植进来，并修掉一个
+**会让整个 Harness 起不来**的故障。
+
+前置库的另一半 `dsh-client-ui-aqua` 线上没有新版本：npm 最新仍是 `1.3.1`（2026-08-17），
+GitHub 仓库 2026-08-22 之后只有 README / LICENSE 的提交，**没有任何功能提交** —— 所以基线
+保持 `1.3.1-patch.4`，玻璃材质与动效引擎逐字节未变。
+
+上游那两个提交是 1016『四时良辰』（`ef19417`）与 1017『初雪霜银』（`8dc9fb4`），
+只动了三个文件：`brand-plugin/lib/client.js`（964 → 2868 行）、
+`plugins/lan-access/lib/client.js`（398 → 428 行）、`plugins/skin/lib/client.js`
+（892 → 939 行）。`claude/` 目录、`crab-plugin`、`plugins/font-switcher`、
+`plugins/lan-access/lib/index.js` 与 `qr.js` **逐字节未变** —— 令牌表、字体、圆角阶梯
+与 1.1.0 完全一致。
+
+### 新增的能力（2 项，全部来自上游）
+
+1. **「深度求索中」旁边的加载图标三选一**（1016）。三种取值：
+   **星芒**（Claude 官方八种形态轮播：把一条竖排 SVG 用 `steps()` 逐帧滚动，162 KB 路径
+   数据内嵌、无运行时依赖）、**螃蟹**（43 帧 34×23 像素精灵，靠 `background-position`
+   步进，`image-rendering: pixelated`）、**默认**（保留原来的蓝色鲸尾）。
+   取值存在 `dsh-claude-brand.prefs` 的 `iconStyle` 里；模式写到 `<html data-dcb-icon>`，
+   CSS 按这个属性分叉，所以 `off` 时对官方样式**一个规则都不碰**。
+   默认是 `spark`；老记录没有这个字段时回落到默认值，不会读坏。
+2. **局域网面板的「刷新」按钮**（1017）。DSH 每次启动换发配对 token，而面板的 URL 与二维码
+   只在挂载时取一次 —— 页面开着重启宿主，就会一直显示旧码。现在可以就地重取；
+   「复制链接」独立成一个键，请求期间按钮 `disabled` 并显示「刷新中…」，
+   挂载时的首次拉取是静默的（`load(quiet)`），避免打开面板就一闪「刷新中」。
+
+### 本插件做的改写（相对上游，均已写进生成物头部）
+
+- **加载动画的三选一开关放进侧栏底部气泡**。上游把它放在 skin 插件的 Claude-X 设置页，
+  而 glass **不移植那张页面**（那是另一套皮肤的观感面板，glass 有自己的外观面板）。
+  照上游自己对 `showProfile` 的同一理由（“只装 brand 插件时，这个气泡是唯一的回头路”），
+  把三选一挂在「显示侧栏底部那行」旁边。否则 `iconStyle` 只会是**只写**状态：
+  默认星芒生效、却没有任何入口退回鲸尾。
+- **局域网托管行不再写 `host: '0.0.0.0'`**，改为写本机具体 LAN 地址，并在机器没有 LAN 地址
+  时直接报错、不再硬写。**这是本版最要紧的一条**，见下一节。
+
+### 修掉的故障：`webserver` 绑 `0.0.0.0` 会让整个 Harness 起不来
+
+1.1.0 的「手机访问」开关会把一段托管行写进 profile 的 `cordis.patch.yml`：
+
+```yaml
+- id: webserver
+  name: '@deepseek-ai/dsh-host-webserver'
+  config:
+    host: '0.0.0.0'
+    ...
+```
+
+宿主升到 **dsh-desktop 0.2.1-rc.2** 后，`dsh-host-webserver` 开始**拒绝通配地址**：
+
+```
+webserver: host "0.0.0.0" is an unspecified (wildcard) address, which is not
+supported: binding every interface would expose remote code execution to the
+network; bind one concrete IPv4 or IPv6 address of a local interface instead
+```
+
+而 `webserver` 是 **required** 插件 —— 它激活失败不是面板坏掉，是 `dsh: startup failed:
+2 required plugins did not activate`，整个 Desktop 窗口都起不来（`web-runtime` 只是连带
+在等 `webServer`）。本机实测的崩溃现场在
+`%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*.log`（`source: host` / `source: web-boot`）。
+
+**修复**：
+- `writeBind()` 现在解析 `lanAddresses()[0]`（上游本就有这个函数，私有网段优先），
+  把托管行写成具体地址；没有 LAN 地址时抛错，面板报「写入失败」而不是写一个必然炸的块。
+- 状态路由的 `reachable` 从「是不是 `0.0.0.0`」改成「是不是回环地址」，否则改了绑定以后
+  面板会一直说不可达。
+- 「手机访问」面板的开关状态一起改了。上游用 `info.bindHost === "0.0.0.0"` 判断「已开启」，
+  用 `info.pendingBind === "0.0.0.0"` 判断「已写入、待重启」；绑定地址换成具体 IP 之后这两处
+  永远不成立 —— 开关会一直显示关闭、两条重启提示也不会出现。现在统一按「不是回环地址」判断。
+- 已装 1.1.0 且开过「手机访问」的机器，**升级前**要手工清掉旧托管块（否则新版也救不了：
+  host 在插件加载之前就已经拒绝启动）：
+
+  ```powershell
+  # 打开 %USERPROFILE%\.dsh\profiles\<profile>\cordis.patch.yml
+  # 删掉 "# >>> dsh-lan-access bind >>>" 与 "# <<< dsh-lan-access bind <<<" 之间整段，重启。
+  ```
+
+- 已知代价：具体地址同样是「下次启动必须存在」的。换了网络 / DHCP 换了 IP，那个地址会绑不上
+  → 同样起不来。所以「手机访问」要么不开，要么在换网络之后先关掉它再重启。
+
+### 工程侧
+
+- `tools/port-from-theme.mjs`：
+  - 新增 `--theme-commit <sha>` / `DSH_CLAUDE_THEME_COMMIT`：没有 `.git` 的上游树（发行包、
+    或 git 连不上 github.com 时用 GitHub contents API 重建的检出）也能在 `PORT-MANIFEST.md`
+    里记录正确的上游 commit，不再写 `unknown`。
+  - 新增 `portBrand()`：brand 半边不再走通用的 `portClient`，因为它现在带一条改写
+    （气泡里的三选一）。所有锚点都 `require1`，上游再改就会报 `PORT PROBLEMS` 而不是生成半截。
+  - 局域网宿主半边新增四处改写（`@param` 注释、`writeBind()` 入口、`host: '0.0.0.0'`、
+    `return allInterfaces ? …`、`reachable`），并加一条断言：代码里若还出现 `0.0.0.0`
+    就拒绝写出。
+- `verify.mjs`：新增静态守卫 —— `lib/lan-access.js` 的代码里（注释除外）出现 `0.0.0.0`
+  直接判失败，并要求 `lanBindHost` 存在。
+- `build.mjs`：读 `src/port/*` 时统一把 CRLF 折成 LF。仓库用 `.gitattributes` 把这类
+  文件存成 LF，而生成器写的是上游的 CRLF（Windows 检出），于是「已提交的源码」和
+  「刚跑完生成器的树」会构建出**不同字节**的 bundle（实测 1123083 vs 1117080）。
+  折成 LF 之后两者一致：产物是源码的函数，不再取决于在哪台机器上构建。
+- `tools/mount-smoke.mjs`：
+  - 局域网那组断言改成「托管行写的是本机 LAN 地址、且**绝不**是 wildcard」，
+    状态路由的 `pendingBind` 也按同一个地址核对；
+  - 修掉一个一直存在的挂起：冒烟**成功**时进程不退出（挂载的插件故意留着
+    定时器：running-label 的 ticker、crab 的 `ctx.timeout`），`npm run release`
+    会在最后一步永远卡住；现在成功路径显式 `process.exit(0)`。
+
+### 升级
+
+```powershell
+copy dsh-claude-glass-1.2.0.tgz "$env:USERPROFILE\.dsh\profiles\desktop\vendor\"
+tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.0.tgz" `
+    -C "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-claude-glass" --strip-components=1
+# 把 profile package.json 里的 file:vendor\dsh-claude-glass-1.1.0.tgz 换成 1.2.0
+# 清掉旧 LAN 托管块（见上一节），再重启宿主
+```
+
+`file:` 依赖按**文件名**记 integrity：同名 tarball 内容变了（版本号没变的那种重打），
+`pnpm install` 会说 `Already up to date` 而不会重新解包 —— 所以版本号必须换。
 
 ---
 

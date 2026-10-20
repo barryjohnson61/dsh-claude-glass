@@ -405,6 +405,20 @@ for (const f of PORTED) {
   } else {
     console.log("  ok   the egg watcher reads props.keyboard, and the LAN scrim goes to document.body");
   }
+
+  // The LAN panel's own switch state. Upstream reads "LAN on" out of
+  // `bindHost === "0.0.0.0"`; the host half now pins a concrete interface
+  // address, so that comparison would show the switch as OFF while LAN access
+  // is on (and both restart hints would go missing).
+  if (code.includes('info.bindHost === "0.0.0.0"')) {
+    console.log("  BAD  the LAN panel still tests bindHost against the wildcard — the switch would read OFF");
+    guardFailures += 1;
+  } else if (!code.includes("var pendingLan =")) {
+    console.log("  BAD  the LAN panel lost its pendingLan test — the restart hints would never show");
+    guardFailures += 1;
+  } else {
+    console.log("  ok   the LAN panel decides on/pending by loopback, not by the wildcard");
+  }
 }
 
 // --- ported host halves ------------------------------------------------------
@@ -473,6 +487,22 @@ if (!existsSync(indexFile)) {
     guardFailures += 1;
   } else {
     console.log("  ok   lan-access.js -> ./qr.js resolves inside lib/");
+  }
+  // The managed row must never pin a wildcard bind. dsh-host-webserver
+  // 0.2.1-rc.2 refuses one ("binding every interface would expose remote code
+  // execution to the network"), and `webserver` is a REQUIRED plugin: a stale
+  // wildcard row does not break the LAN panel, it stops the whole Harness with
+  // "2 required plugins did not activate". Prose may name the wildcard, so
+  // check the code only.
+  const lanCode = lan.replace(/\/\*[\s\S]*?\*\//g, "");
+  if (/0\.0\.0\.0/.test(lanCode)) {
+    console.log("  BAD  lib/lan-access.js still writes a 0.0.0.0 bind — the host refuses it and the Harness will not start");
+    guardFailures += 1;
+  } else if (!lanCode.includes("lanBindHost")) {
+    console.log("  BAD  lib/lan-access.js lost lanBindHost — the managed row has no concrete bind host");
+    guardFailures += 1;
+  } else {
+    console.log("  ok   lan-access pins a concrete LAN address (no wildcard bind)");
   }
 
   // The host plugin's identity and the client services its ported halves need.
