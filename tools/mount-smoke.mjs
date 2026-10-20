@@ -662,6 +662,27 @@ for (const needle of ["# >>> dsh-lan-access bind >>>", `host: '${lanAddr}'`, "po
 if (/host:\s*["']?0\.0\.0\.0/.test(written)) {
   fail("the managed block still pins a wildcard bind — dsh-host-webserver 0.2.1-rc.2 refuses it and the Harness will not start");
 }
+/*
+ * The block is YAML, not a text file: a stray comma (`host: '<ip>',`, which
+ * shipped once) makes the overlay parser reject the whole profile with "bad
+ * indentation of a mapping entry" and the app never starts. A substring check
+ * cannot see that, so assert the row's SHAPE and that no line of the managed
+ * block ends with a comma.
+ */
+{
+  const start = written.indexOf("# >>> dsh-lan-access bind >>>");
+  const end = written.indexOf("# <<< dsh-lan-access bind <<<");
+  const block = start >= 0 && end > start ? written.slice(start, end) : "";
+  if (block === "") fail("the managed block has no opening/closing marker pair");
+  const badComma = block
+    .split(/\r?\n/)
+    .filter((l) => /\S.*,\s*$/.test(l) && !l.trimStart().startsWith("#"));
+  if (badComma.length > 0) fail(`the managed block emits comma-terminated YAML line(s): ${JSON.stringify(badComma[0])}`);
+  if (!new RegExp(`^    host: '${lanAddr.replace(/\./g, "\\.")}'$`, "m").test(block)) {
+    fail(`the managed block's host row is not a bare YAML scalar: expected "    host: '${lanAddr}'"`);
+  }
+  say("  block shape           -> bare YAML scalars, no comma-terminated line");
+}
 if (existsSync(fallbackPatch)) {
   fail(`the switch wrote ${fallbackPatch} — the environment fallback won over the Host's profileContext (that is the desktop-profile bug)`);
 } else {

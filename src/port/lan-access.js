@@ -294,7 +294,7 @@ export function writeBind(allInterfaces, port = DEFAULT_PORT) {
       "  name: '@deepseek-ai/dsh-host-webserver'",
       "  inject: [webStartup]",
       "  config:",
-      "    host: '" + bindHost + "',",
+      "    host: '" + bindHost + "'",
       `    port: ${port}`,
       "    compression: gzip",
       "    compressionLevel: 1",

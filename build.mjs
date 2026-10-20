@@ -51,7 +51,7 @@ import { fileURLToPath } from "node:url";
 
 const PKG = "dsh-claude-glass";
 const OLD_PKG = "dsh-client-ui-aqua";
-const VERSION = "1.2.0";
+const VERSION = "1.2.1";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const OUT = join(ROOT, "dist", PKG);
@@ -668,6 +668,7 @@ writeFileSync(join(OUT, "package.json"), JSON.stringify({
       "ported theme bumped 20bfe79 (1007『火山晨曦』) -> 8dc9fb4 (1017『初雪霜银』): the brand plugin's three-way running-icon switch (Spark loops / walking crab / shipped whale, preference iconStyle in dsh-claude-brand.prefs), the LAN panel's manual URL refresh button, and the skin plugin's ICON_STYLES declaration. claude/ and the other four halves are byte-identical between the two releases",
       "the running-icon switch is mounted from the sidebar-foot popover, not from the skin plugin's Claude-X page: glass does not port that page, and the preference would otherwise be write-only (spark is the shipped default, with no way back to the whale)",
       "LAN access: the managed cordis.patch.yml row pins the machine's concrete LAN address instead of host '0.0.0.0'. dsh-host-webserver 0.2.1-rc.2 REFUSES a wildcard bind ('binding every interface would expose remote code execution to the network'), and webserver is a required plugin -- so a stale wildcard row does not break the panel, it stops the whole Harness from starting with '2 required plugins did not activate'. writeBind() now resolves lanAddresses()[0] and throws when there is none, and the panel's reachable flag tests 'not loopback' instead of 'is 0.0.0.0'",
+      "1.2.1: the managed row's host line is emitted as a bare YAML scalar, host: '<lan ip>'. 1.2.0 shipped it as host: '<lan ip>', -- the array comma of the JS string had leaked into the string itself -- and the overlay parser rejects that with 'bad indentation of a mapping entry', before any plugin loads: turning LAN access on once bricked the next start. The port generator now asserts the emitted expression, verify.mjs asserts it in the built lib/lan-access.js, and the mount smoke asserts the written block has no comma-terminated line and a bare `host: '<ip>'` row",
     ],
   },
   // npm auto-includes LICENSE and README.md but NOT NOTICE, so list it explicitly.

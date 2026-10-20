@@ -55,6 +55,47 @@ react                                  ^18.2.0
 
 ---
 
+## [1.2.1] — 2026-10-20
+
+**修掉 1.2.0 引入的一处启动级回归。** 1.2.0 把「手机访问」的 webserver 托管行改成绑具体
+LAN 地址时，那一行的 YAML 末尾多了一个逗号：
+
+```yaml
+    host: '192.168.137.1',     # ← 1.2.0 写出来的样子，解析器直接拒绝
+```
+
+于是覆盖层解析报 `failed to parse overlay …\cordis.patch.yml: YAMLException: bad
+indentation of a mapping entry (108:26)`；这一步发生在**任何插件加载之前**，所以
+「开一次手机访问 → 下次启动整个 Harness 起不来」，而应用只会退回只加载 base + web-app
+的最小 profile（`package.json` 的 bundles 被裁到 2 项，`cordis.patch.yml` 被换成一小段）。
+
+根因是移植改写里的一处字符串拼接：上游那一行是 JS **数组元素**
+
+```js
+      "    host: '0.0.0.0'",
+```
+
+—— 最后的逗号属于数组，不在字符串里。1.2.0 的替换写成 `"    host: '" + bindHost + "',",`，
+把逗号拼进了**字符串内容**，于是 YAML 行变成 `host: '192.168.137.1',`。1.2.1 改成
+`"    host: '" + bindHost + "'",`，并补了三道守卫：
+
+- `tools/port-from-theme.mjs`：`require1` 断言生成出的表达式；输出里一旦出现 `+ "',",`
+  就拒绝写出（`PORT PROBLEMS` + 退出码 1）。
+- `verify.mjs`：构建产物里出现 `+ "',",` 直接判失败，并要求 `"    host: '" + bindHost + "'"`
+  这行存在。
+- `tools/mount-smoke.mjs`：把**实际写出的托管块**按 YAML 形状校验 —— 块内不允许有以逗号
+  结尾的行，且 `host:` 必须匹配 `^    host: '<ip>'$`。原来的断言只查子串 `host: '<ip>'`，
+  带逗号的版本也能通过，所以它当时没拦住这个回归。
+
+其余内容与 1.2.0 相同（主题 1017 移植、加载动画三选一、LAN 面板刷新按钮、面板状态判定）。
+
+**已经中招的机器**：把 profile 的 `cordis.patch.yml` 里
+`# >>> dsh-lan-access bind >>>` 到 `# <<< dsh-lan-access bind <<<` 之间整段删掉即可启动
+（应用退回最小 profile 时也会顺手把原文件留成 `cordis.patch.yml.bak-*`）；之后再开
+「手机访问」，1.2.1 写出的是合法的 `host: '<ip>'`。
+
+---
+
 ## [1.2.0] — 2026-10-20
 
 把 `dsh-claude-theme` **发行版 1017『初雪霜银』**（commit `8dc9fb4`，2026-10-16）相对

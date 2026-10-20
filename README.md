@@ -105,10 +105,10 @@
 
 ```powershell
 # 1) 放进 profile 的 vendor 目录
-copy dsh-claude-glass-1.2.0.tgz "$env:USERPROFILE\.dsh\profiles\desktop\vendor\"
+copy dsh-claude-glass-1.2.1.tgz "$env:USERPROFILE\.dsh\profiles\desktop\vendor\"
 
 # 2) 解包到 node_modules
-tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.0.tgz" `
+tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.1.tgz" `
     -C "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-claude-glass" --strip-components=1
 ```
 
@@ -118,22 +118,27 @@ tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.0.t
 > 然后把 `pnpm-lock.yaml` 里 `dsh-claude-glass@file:vendor/…tgz` 那条的 `integrity` 换成新 tarball 的
 > （`sha512-` + base64 的 SHA-512），这样后续 `pnpm install` 才是干净的空操作。
 
-> ⚠️ **从 1.1.0 升级（或曾经开过「手机访问」）**：先看一眼 profile 的
-> `cordis.patch.yml`。1.1.0 会把托管块里的 `webserver` 绑到 `0.0.0.0`，而宿主
-> 0.2.1-rc.2 拒绝通配地址；`webserver` 是 required 插件，所以**整个 Harness 都起不来**
-> （`dsh: startup failed: 2 required plugins did not activate`，
-> 细节见 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*.log`）。
-> 升级前把 `# >>> dsh-lan-access bind >>>` 到 `# <<< dsh-lan-access bind <<<`
-> 之间的整段删掉，再重启；1.2.0 之后重新打开开关会写具体 LAN 地址，不会再出现这个块。
+> ⚠️ **从 1.1.0 / 1.2.0 升级（或曾经开过「手机访问」）**：先看一眼 profile 的
+> `cordis.patch.yml`。这里有两种已知的「一开就起不来」：
+>
+> - **1.1.0** 会把托管块里的 `webserver` 绑到 `0.0.0.0`，而宿主 0.2.1-rc.2 拒绝通配地址，
+>   `webserver` 是 required 插件 → `dsh: startup failed: 2 required plugins did not activate`；
+> - **1.2.0** 那一行末尾多一个逗号（`host: '192.168.x.x',`）→ 覆盖层解析报
+>   `YAMLException: bad indentation of a mapping entry`，这一步在任何插件加载之前。
+>
+> 两种都只需把 `# >>> dsh-lan-access bind >>>` 到 `# <<< dsh-lan-access bind <<<`
+> 之间的整段删掉再重启（应用退回最小 profile 时也会把原文件留成
+> `cordis.patch.yml.bak-*`，细节见 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*.log`）。
+> 1.2.1 之后重新打开开关写出的是合法的 `host: '<ip>'`。
 > 另需注意：具体地址同样要「下次启动时存在」，换网络/DHCP 换了 IP 后请先关掉这个开关。
-
-然后编辑 `%USERPROFILE%\.dsh\profiles\desktop\package.json`：
+>
+> 然后编辑 `%USERPROFILE%\.dsh\profiles\desktop\package.json`：
 
 ```jsonc
 {
   "dependencies": {
     // 原来是 dsh-client-ui-aqua，换成这一行
-    "dsh-claude-glass": "file:vendor\\dsh-claude-glass-1.2.0.tgz"
+    "dsh-claude-glass": "file:vendor\\dsh-claude-glass-1.2.1.tgz"
   },
   "dsh": {
     "profile": {

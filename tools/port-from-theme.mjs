@@ -927,7 +927,15 @@ export function writeBind(allInterfaces, port = DEFAULT_PORT) {
   const bindHost = allInterfaces ? lanBindHost() : "127.0.0.1";`;
 
 const LAN_HOST_LINE_ANCHOR = `      "    host: '0.0.0.0'",`;
-const LAN_HOST_LINE_FIXED = `      "    host: '" + bindHost + "',",`;
+/*
+ * The needle above is a JS array ELEMENT: `"...0.0.0.0'"` is the string and the
+ * final `,` belongs to the array. The replacement must therefore contribute the
+ * quotes only — `"...'" + bindHost + "'"` — with the array comma left where the
+ * anchor had it. Writing `"',"` instead puts a comma INTO the emitted YAML line
+ * (`host: '192.168.137.1',`), which the overlay parser rejects with
+ * "bad indentation of a mapping entry" and the whole app refuses to boot.
+ */
+const LAN_HOST_LINE_FIXED = `      "    host: '" + bindHost + "'",`;
 
 const LAN_RETURN_ANCHOR = `  return allInterfaces ? "0.0.0.0" : "127.0.0.1";`;
 const LAN_RETURN_FIXED = `  return allInterfaces ? bindHost : "127.0.0.1";`;
@@ -998,6 +1006,14 @@ function portLanAccessHost() {
    * still mention it, so check the value form only. */
   if (/\b0\.0\.0\.0\b/.test(out.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\//g, ""))) {
     problems.push(`${label}: a wildcard bind is still written outside the comments`);
+  }
+  /* The emitted row is YAML, so its quoting is load-bearing: `host: '<ip>'` is a
+   * scalar, `host: '<ip>',` is a syntax error that stops the whole app from
+   * booting (see LAN_HOST_LINE_FIXED). Assert both shapes here, where the
+   * generator can still refuse to write, and not only in the smoke test. */
+  require1(out, LAN_HOST_LINE_FIXED, label);
+  if (out.includes(`+ "',",`)) {
+    problems.push(`${label}: the managed row's host line emits a trailing comma — invalid YAML`);
   }
 
   const file = "lan-access.js";

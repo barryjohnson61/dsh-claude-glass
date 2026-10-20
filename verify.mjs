@@ -504,6 +504,20 @@ if (!existsSync(indexFile)) {
   } else {
     console.log("  ok   lan-access pins a concrete LAN address (no wildcard bind)");
   }
+  // The row is YAML, and its quoting is load-bearing. `host: '<ip>'` is a
+  // scalar; `host: '<ip>',` is "bad indentation of a mapping entry" — and a
+  // malformed overlay stops the whole app from booting, before any plugin
+  // loads (this shipped once, in 1.2.0). So assert the emitted expression here,
+  // not only the generated rows the smoke test exercises.
+  if (lan.includes(`+ "',",`)) {
+    console.log("  BAD  the managed row's host line emits a trailing comma — the overlay parser rejects it");
+    guardFailures += 1;
+  } else if (!lan.includes(`"    host: '" + bindHost + "'"`)) {
+    console.log("  BAD  lib/lan-access.js lost the `host: '<bindHost>'` row (missing or reshaped)");
+    guardFailures += 1;
+  } else {
+    console.log("  ok   the managed host row is emitted as a bare YAML scalar");
+  }
 
   // The host plugin's identity and the client services its ported halves need.
   // cordis.patch.yml is where `ui-claude-glass` actually lives (it is a plugin
