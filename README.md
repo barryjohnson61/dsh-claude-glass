@@ -9,6 +9,19 @@
 指南包含在本机 DeepSeek Harness 中准备部署，以及使用 Codex、Claude Desktop 或 Claude Code
 辅助安装到 Harness 的提示词、操作步骤、验收与回滚方法，并说明构建输入和运行时兼容性要求。
 
+> ⚠️ **指南写于 1.1.0 时代**：文中所有 `1.1.0` 版本号请按 §3 换成当前 `1.2.2`；它关于
+> 「启用 LAN 绑定 / 让手机扫码」的步骤已被 1.2.2 废弃 —— 这个宿主上绑定不可用、开关置灰，
+> 远程访问改用 `@linxin666/dsh-remote-web-ui` 隧道（原因见 §3 的升级警告）。
+
+**当前版本 1.2.2**（2026-10-20）。对应上游：`dsh-claude-theme` @ `8dc9fb4`（1017『初雪霜银』）、
+`dsh-client-ui-aqua` `1.3.1-patch.4`；目标运行时 **0.2.1-rc.2**。1.2.x 的变化集中在三处：
+
+- **跟到上游 1016/1017**：品牌插件多了一整套「加载图标替换」引擎（内嵌精灵/形态数据），
+  侧栏底部气泡里因此多出「加载动画」三选一；LAN 面板多一个刷新按钮（1017）。
+- **关掉「手机访问」的绑定开关**（1.2.2）：这台宿主上「网页服务器拒绝通配地址」与
+  「桌面外壳只连 `127.0.0.1`」互斥，1.1.0 / 1.2.0 / 1.2.1 各自踩过一种启动失败，详见 §3。
+- **构建可复现**（§5.0）：`src/port/*` 的 CRLF 会在读取时折成 LF，源码重建与已打包产物逐字节一致。
+
 ![浅色](shots/dsh-01-claude-glass.png)
 ![深色](shots/dsh-05-dark.jpg)
 
@@ -20,7 +33,7 @@
 | --- | --- |
 | **dsh-claude-theme** | 278 个 `--dsw-*` 颜色令牌（`#faf9f5` 画布 / `#d97757` 珊瑚 / `#181715` 暖黑深色）、完整排版阶梯、`--cl-*` 调色板钩子、圆角阶梯（8 / 12 / 16 / 26）、`claude.ai` 的卡片语言 |
 | **dsh-client-ui-aqua** | 流体着色器背景、玻璃/云母材质、小鱼与气泡等环境装饰、鼠标辉光、悬停下压、入场动画、壁纸（图/视频）层、完整的设置界面 |
-| **dsh-claude-theme 的插件套件**（1.1.0 起） | 请求指纹彩蛋（⚠️ 代码入库但**实机不触发**，按未移植处理）、局域网访问（含手写 QR 编码器）、品牌替换、Clawd 螃蟹挂件、字体切换 —— 见 §2.1 |
+| **dsh-claude-theme 的插件套件**（1.1.0 起；1.2.0 跟到 1017） | 请求指纹彩蛋（⚠️ 代码入库但**实机不触发**，按未移植处理）、局域网访问（含手写 QR 编码器；**1.2.2 起只读** —— 绑定开关置灰，见 §3）、品牌替换（含「加载动画」三选一）、Clawd 螃蟹挂件、字体切换 —— 见 §2.1 |
 
 字体也从 claude-theme 原样搬来（四份 woff2 以 base64 内联进 bundle）：
 **Newsreader** 衬线正文 / **Inter** 界面外壳 / **JetBrains Mono** 代码。
@@ -68,7 +81,7 @@
 | 功能 | 怎么用 | 依赖的宿主服务 |
 | --- | --- | --- |
 | **请求指纹彩蛋** ⚠️ **未生效（按未移植处理）** | 代码在、`window.__claudeFootprint` 也在，但在输入框里打裸 `TZ=` **不会**弹面板：这一版 DSH 不把这个座位的草稿交给它。想手动看面板用 `window.__claudeFootprint.show()`。缺什么、从哪接，见 CHANGELOG 同名条目 | 无（纯客户端） |
-| **局域网访问** | 侧栏底部「手机访问」图标 → 面板显示本机 LAN 地址、端口与刷新按钮；面板经 `react-dom` 的 portal 渲染到 `document.body`，不留在侧栏的包含块里。**1.2.2 起绑定开关置灰**：宿主拒绝 `0.0.0.0`，而绑具体网卡会让桌面外壳连不上 `127.0.0.1`、下次启动失败（见 §3 与 CHANGELOG 1.2.2）；远程访问请用 `@linxin666/dsh-remote-web-ui` 隧道 | `connection` + `webServer` |
+| **局域网访问** | 侧栏底部「手机访问」图标 → 面板列出本机 LAN 地址、一个**置灰**的「局域网访问」开关与「刷新」按钮；面板经 `react-dom` 的 portal 渲染到 `document.body`，不留在侧栏的包含块里。**1.2.2 起绑定开关置灰**：宿主拒绝 `0.0.0.0`，而绑具体网卡会让桌面外壳连不上 `127.0.0.1`、下次启动失败（见 §3 与 CHANGELOG 1.2.2）；拿不到可达的 LAN URL，所以二维码与「复制链接」都不再出现。远程访问请用 `@linxin666/dsh-remote-web-ui` 隧道 | `connection` + `webServer` |
 | **品牌替换** | 星形标记替换官方品牌位，同时改 `document.title` 与 favicon；偏好存 `localStorage: dsh-claude-brand.prefs`。**1.2.0 起**侧栏底部头像气泡里多一条「加载动画」三选一（星芒 / 螃蟹 / 默认鲸尾，`iconStyle`）—— 上游把开关放在 skin 插件的 Claude-X 页，glass 不移植那张页，所以搬到了这里 | 无 |
 | **Clawd 螃蟹挂件** | 直接落在输入框卡片（`[data-composer-card]`）上的像素螃蟹，设置页 id `clawd` | `timer`（客户端） |
 | **字体切换** | 设置 → 字体（id `fonts`）：衬线 / 无衬线 / 等宽各选一组；切换后皮肤里所有字面量 token 自动跟随 | `connection`（客户端半边另需 host 路由） |
@@ -79,10 +92,12 @@
    `TZ=` 不会有反应，这是预期。要确认代码确实加载了，看控制台
    `typeof window.__claudeFootprint === "function"`；要手动看面板用 `window.__claudeFootprint.show()`。
    触发链路缺什么、后人从哪里接上，写在 CHANGELOG「未移植：请求指纹彩蛋」。
-2. 侧栏底部出现「手机访问」，点开后能看到本机 LAN 地址与端口，面板浮在整个应用之上
-   （它 portal 到 `document.body`），**不能**糊在侧栏里。**1.2.2 起开关是置灰的**，标题为
+2. 侧栏底部出现「手机访问」，点开后能看到本机 LAN 地址列表与一个**置灰**的「局域网访问」开关，
+   面板浮在整个应用之上（它 portal 到 `document.body`），**不能**糊在侧栏里。标题是
    「局域网访问（当前 DSH 不支持）」，下方说明为什么（宿主拒绝通配地址、绑具体网卡会让桌面
-   外壳连不上 `127.0.0.1`）。点了也不该写 `cordis.patch.yml`：该文件必须保持逐字节不变。
+   外壳连不上 `127.0.0.1`）。因为拿不到可达的 LAN URL，**这一版不会再出现二维码 / 复制链接**；
+   点「刷新」只是重新读一遍状态（永远是 `reachable:false`），不会写 profile。点开关（已禁用）
+   也不该写 `cordis.patch.yml`：该文件必须保持逐字节不变。
    ⚠️ **profile 里任何 `webserver` 托管行都不该存在** —— 绑 `0.0.0.0` 被宿主拒绝（1.1.0），
    绑具体 IP 又让外壳连不上（1.2.1），两种都是「一开就起不来」（见 §3 的升级警告）。
 3. 品牌位（侧栏顶部 + 新会话首屏）出现星形标记；窗口标题与 favicon 一起变。
@@ -107,6 +122,12 @@ copy dsh-claude-glass-1.2.2.tgz "$env:USERPROFILE\.dsh\profiles\desktop\vendor\"
 # 2) 解包到 node_modules
 tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.2.tgz" `
     -C "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-claude-glass" --strip-components=1
+
+# 3) 核对装进去的确实是这个包（版本号 + 与 dist 同哈希）
+(Get-Content "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-claude-glass\package.json" |
+    ConvertFrom-Json).version          # 期望 1.2.2
+Get-FileHash "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-claude-glass\lib\client.js" -Algorithm SHA256
+Get-FileHash dist\dsh-claude-glass\lib\client.js -Algorithm SHA256   # 两条哈希必须一致
 ```
 
 > **升级时注意**：`file:` 依赖在 lockfile 里按**文件名**记住完整性，所以同名 tarball 内容变了
@@ -132,6 +153,10 @@ tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.2.t
 > **1.2.2 起不再写这块**：面板里的开关会置灰并说明原因，`writeBind()` 只保留「删除旧块」。
 > 结论是这个宿主上「网页服务器对局域网可达」与「桌面外壳能连上」互斥，远程访问请用已配置的
 > `@linxin666/dsh-remote-web-ui` 隧道。
+>
+> 装好 1.2.2 **也不会**自动清掉旧块 —— 开关已置灰，没有人会去调它。升级前如果 profile 里
+> 还残留这段，请按上面的办法手工删；`writeBind(false)` 的删除路径只在手工
+> `POST /api/dsh-lan-access/bind {"enabled":false}`（或将来有 UI 重新接管开关）时才会跑到。
 >
 > 然后编辑 `%USERPROFILE%\.dsh\profiles\desktop\package.json`：
 
@@ -454,10 +479,28 @@ git diff --stat src\port
 > 1.2.0 就是这么生成的（1017『初雪霜银』= `8dc9fb4`）；树的 82 个 blob 已逐个与
 > GitHub tree API 的 sha 核对一致。
 
-生成器里现在有 **4 条改写**，每条都写进生成物头部、并且每个锚点都 `require1` 断言：
-`ctx.get("slots") -> ctx.slots`（五个客户端半边）、`lib/lan-access.js` 的 profile 解析、
-`lib/lan-access.js` 的绑定地址（**不再写 `0.0.0.0`**，宿主 0.2.1-rc.2 拒绝通配地址）、
-以及 `brand.client.js` 里补的那条「加载动画」三选一（上游放在 glass 不移植的 Claude-X 页）。
+生成器里现在有 **5 条改写**，每条都写进生成物头部、并且每个锚点都 `require1` 断言：
+
+1. `ctx.get("slots") -> ctx.slots`（五个客户端半边）；
+2. `lib/lan-access.js` 的 profile 解析：改用 Host 发布的 `profileContext`（`name` / `dir` /
+   `patchPath`），不再只认 `DSH_PROFILE` —— 桌面端不导出这个变量，旧写法会去写 `profiles/web`；
+3. `lib/lan-access.js` 的 `writeBind()`：**不写 `webserver` 行**，只删旧的托管块；开关置 true
+   时直接抛错（1.2.2，理由见 §3 的三种启动失败）；
+4. `lib/lan-access.client.js` 的面板判定：是否开启改看 `loopback`（不再拿 `bindHost` 跟
+   `0.0.0.0` 比）、重启提示看 `pendingLan`；1.2.2 又把开关置灰，标题与说明改成
+   「局域网访问（当前 DSH 不支持）」并指向隧道；
+5. `brand.client.js` 里补的「加载动画」三选一（上游把入口放在 glass 不移植的 Claude-X 页）。
+
+每条的原文与理由都写在生成物文件头（`src/port/*.js` 前 30 行），不必回头翻 CHANGELOG。
+
+**三层守卫**（1.2.2 加，防止再把 `webserver` 行写回去）：
+
+- **生成器**：`writeBind()` 的输出里出现 `"    host: '` 就 `PORT PROBLEMS` + 退出码 1 中止；
+- **`verify.mjs`**：bundle 去注释后出现 `0.0.0.0`、出现 `+ "',",` / `+ "'",` 的拼接、或没有
+  「局域网绑定在当前 DSH 上不可用」这句拒绝文案，都是 `BAD`；
+- **`tools/mount-smoke.mjs`**：`POST /api/dsh-lan-access/bind {"enabled":true}` 必须回 500 +
+  拒绝文案，`cordis.patch.yml` 必须逐字节不变、`pendingBind` 必须为 `null`；`{"enabled":false}`
+  仍回 200 且 `pendingBind` 为 `127.0.0.1`。
 
 `src/port/PORT-MANIFEST.md` 记录本次移植对应的上游 commit 与每个文件的 sha256 前 16 位，
 所以「这段 vendored 代码来源哪一版」永远可查。
@@ -502,7 +545,8 @@ node build.mjs --base … --claude …                                        # 
   “触发不了”的。
 - **局域网面板**：点一下「手机访问」按钮，断言 `LanPanel` 的遮罩经 `createPortal` 落到
   `document.body`、且**不在**侧栏自己的子树里（否则它就被侧栏里那些 `backdrop-filter`
-  包含块抓住了）。
+  包含块抓住了）。1.2.2 起同一段还断言开关的拒绝路径：置 true 回 500、`cordis.patch.yml`
+  逐字节不变（见 §5.4 的三层守卫）。
 
 ```powershell
 node tools\break-lan-portal.cjs dist\dsh-claude-glass\lib\client.js       # 把 portal 改回原地渲染
@@ -570,7 +614,7 @@ GUI 清单为准。
 | --- | --- |
 | `assets/claude-tokens.json` | `build.mjs` 从上游 `claude/skin.css` 解析出的令牌表 |
 | `dist/dsh-claude-glass/` | `build.mjs` 生成的完整插件包目录 |
-| `dist/dsh-claude-glass/dsh-claude-glass-1.1.0.tgz` | `pack.mjs` 生成的当前版本安装包 |
+| `dist/dsh-claude-glass/dsh-claude-glass-<版本>.tgz` | `pack.mjs` 生成的当前版本安装包（当前 1.2.2） |
 
 真正的发布包由 `build.mjs` 生成在 `dist/dsh-claude-glass/`，它的 `package.json`
 才带 `dsh.bundle.patch` / `dsh.client` 等 DSH 需要的字段。
