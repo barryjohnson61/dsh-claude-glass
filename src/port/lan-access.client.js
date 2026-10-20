@@ -214,10 +214,11 @@ const portLanAccess = (function () {
 						"手机需与本机在同一网络。扫开后就是完整的 DSH 界面，没有第二个 App。"),
 				);
 			} else if (info) {
-				body.push(h("div", { className: "dla-label", key: "l1" }, "还没打开局域网访问"));
+				body.push(h("div", { className: "dla-label", key: "l1" }, "局域网访问（当前 DSH 不支持）"));
 				body.push(
 					h("div", { className: "dla-note", key: "n2" },
-						"下面打开开关并重启 DSH，这里就会出现二维码。"),
+						"宿主拒绝通配地址，绑定具体网卡又会让桌面外壳连不上 127.0.0.1、下次启动失败。" +
+						"远程访问请用「远程网页」隧道。"),
 				);
 			} else {
 				body.push(h("div", { className: "dla-note", key: "n3" }, "读取中…"));
@@ -244,7 +245,7 @@ const portLanAccess = (function () {
 							h("input", {
 								type: "checkbox",
 								checked: enabled,
-								disabled: busy,
+								disabled: true,
 								onChange: function (e) { toggle(e.target.checked); },
 							}),
 							h("span", null, "局域网访问"),

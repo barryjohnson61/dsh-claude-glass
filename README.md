@@ -68,7 +68,7 @@
 | 功能 | 怎么用 | 依赖的宿主服务 |
 | --- | --- | --- |
 | **请求指纹彩蛋** ⚠️ **未生效（按未移植处理）** | 代码在、`window.__claudeFootprint` 也在，但在输入框里打裸 `TZ=` **不会**弹面板：这一版 DSH 不把这个座位的草稿交给它。想手动看面板用 `window.__claudeFootprint.show()`。缺什么、从哪接，见 CHANGELOG 同名条目 | 无（纯客户端） |
-| **局域网访问** | 侧栏底部「手机访问」图标 → 面板显示本机 LAN 地址、端口、二维码与绑定开关，并可**就地刷新**配对 URL（宿主每次启动换发 token，不必整页刷新）；面板经 `react-dom` 的 portal 渲染到 `document.body`，不留在侧栏的包含块里 | `connection` + `webServer` |
+| **局域网访问** | 侧栏底部「手机访问」图标 → 面板显示本机 LAN 地址、端口与刷新按钮；面板经 `react-dom` 的 portal 渲染到 `document.body`，不留在侧栏的包含块里。**1.2.2 起绑定开关置灰**：宿主拒绝 `0.0.0.0`，而绑具体网卡会让桌面外壳连不上 `127.0.0.1`、下次启动失败（见 §3 与 CHANGELOG 1.2.2）；远程访问请用 `@linxin666/dsh-remote-web-ui` 隧道 | `connection` + `webServer` |
 | **品牌替换** | 星形标记替换官方品牌位，同时改 `document.title` 与 favicon；偏好存 `localStorage: dsh-claude-brand.prefs`。**1.2.0 起**侧栏底部头像气泡里多一条「加载动画」三选一（星芒 / 螃蟹 / 默认鲸尾，`iconStyle`）—— 上游把开关放在 skin 插件的 Claude-X 页，glass 不移植那张页，所以搬到了这里 | 无 |
 | **Clawd 螃蟹挂件** | 直接落在输入框卡片（`[data-composer-card]`）上的像素螃蟹，设置页 id `clawd` | `timer`（客户端） |
 | **字体切换** | 设置 → 字体（id `fonts`）：衬线 / 无衬线 / 等宽各选一组；切换后皮肤里所有字面量 token 自动跟随 | `connection`（客户端半边另需 host 路由） |
@@ -79,15 +79,12 @@
    `TZ=` 不会有反应，这是预期。要确认代码确实加载了，看控制台
    `typeof window.__claudeFootprint === "function"`；要手动看面板用 `window.__claudeFootprint.show()`。
    触发链路缺什么、后人从哪里接上，写在 CHANGELOG「未移植：请求指纹彩蛋」。
-2. 侧栏底部出现「手机访问」，点开后状态/二维码都能出图（二维码用手机扫一下最稳）。
-   面板应当浮在整个应用之上（它 portal 到 `document.body`），**不能**糊在侧栏里；反复点复选框
-   不应让侧栏变形。勾选后复选框可能立刻回到勾选态 —— 那是绑定已生效（宿主返回本机 LAN
-   地址），不是点击无效。
-   勾上开关后它要写进**当前启动的那个 profile** 的 `cordis.patch.yml`
-   （本机 = `%USERPROFILE%\.dsh\profiles\desktop\`；路径取自宿主的 `profileContext`，不再依赖
-   `DSH_PROFILE`），并提示重启宿主才生效。若宿主没配置 LAN 绑定，这里应显示失败而不是白屏。
-   ⚠️ **托管行里必须是具体 IP，绝不能是 `0.0.0.0`** —— 宿主 0.2.1-rc.2 会拒绝通配地址，
-   而 `webserver` 是 required 插件，写错了整个 Harness 都起不来（见 §3 的升级警告）。
+2. 侧栏底部出现「手机访问」，点开后能看到本机 LAN 地址与端口，面板浮在整个应用之上
+   （它 portal 到 `document.body`），**不能**糊在侧栏里。**1.2.2 起开关是置灰的**，标题为
+   「局域网访问（当前 DSH 不支持）」，下方说明为什么（宿主拒绝通配地址、绑具体网卡会让桌面
+   外壳连不上 `127.0.0.1`）。点了也不该写 `cordis.patch.yml`：该文件必须保持逐字节不变。
+   ⚠️ **profile 里任何 `webserver` 托管行都不该存在** —— 绑 `0.0.0.0` 被宿主拒绝（1.1.0），
+   绑具体 IP 又让外壳连不上（1.2.1），两种都是「一开就起不来」（见 §3 的升级警告）。
 3. 品牌位（侧栏顶部 + 新会话首屏）出现星形标记；窗口标题与 favicon 一起变。
    点侧栏底部那行头像 → 气泡里除名字/副标题/头像外，多一条「加载动画」单选：
    选「星芒」后「深度求索中」旁边是 Claude 的八形态轮播，选「螃蟹」是像素蟹走路，
@@ -105,10 +102,10 @@
 
 ```powershell
 # 1) 放进 profile 的 vendor 目录
-copy dsh-claude-glass-1.2.1.tgz "$env:USERPROFILE\.dsh\profiles\desktop\vendor\"
+copy dsh-claude-glass-1.2.2.tgz "$env:USERPROFILE\.dsh\profiles\desktop\vendor\"
 
 # 2) 解包到 node_modules
-tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.1.tgz" `
+tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.2.tgz" `
     -C "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-claude-glass" --strip-components=1
 ```
 
@@ -118,19 +115,23 @@ tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.1.t
 > 然后把 `pnpm-lock.yaml` 里 `dsh-claude-glass@file:vendor/…tgz` 那条的 `integrity` 换成新 tarball 的
 > （`sha512-` + base64 的 SHA-512），这样后续 `pnpm install` 才是干净的空操作。
 
-> ⚠️ **从 1.1.0 / 1.2.0 升级（或曾经开过「手机访问」）**：先看一眼 profile 的
-> `cordis.patch.yml`。这里有两种已知的「一开就起不来」：
+> ⚠️ **从任何旧版本升级（或曾经开过「手机访问」）**：先看一眼 profile 的
+> `cordis.patch.yml`。这里有过三种已知的「一开就起不来」：
 >
-> - **1.1.0** 会把托管块里的 `webserver` 绑到 `0.0.0.0`，而宿主 0.2.1-rc.2 拒绝通配地址，
+> - **1.1.0** 把托管块里的 `webserver` 绑到 `0.0.0.0`，宿主 0.2.1-rc.2 拒绝通配地址，
 >   `webserver` 是 required 插件 → `dsh: startup failed: 2 required plugins did not activate`；
 > - **1.2.0** 那一行末尾多一个逗号（`host: '192.168.x.x',`）→ 覆盖层解析报
->   `YAMLException: bad indentation of a mapping entry`，这一步在任何插件加载之前。
+>   `YAMLException: bad indentation of a mapping entry`，这一步在任何插件加载之前；
+> - **1.2.1** 语法已合法，但绑具体网卡后桌面外壳仍连 `http://127.0.0.1:<port>`，
+>   下次启动报 `[TypeError: fetch failed] … ECONNREFUSED 127.0.0.1:<port>`。
 >
-> 两种都只需把 `# >>> dsh-lan-access bind >>>` 到 `# <<< dsh-lan-access bind <<<`
+> 三种都只需把 `# >>> dsh-lan-access bind >>>` 到 `# <<< dsh-lan-access bind <<<`
 > 之间的整段删掉再重启（应用退回最小 profile 时也会把原文件留成
 > `cordis.patch.yml.bak-*`，细节见 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*.log`）。
-> 1.2.1 之后重新打开开关写出的是合法的 `host: '<ip>'`。
-> 另需注意：具体地址同样要「下次启动时存在」，换网络/DHCP 换了 IP 后请先关掉这个开关。
+>
+> **1.2.2 起不再写这块**：面板里的开关会置灰并说明原因，`writeBind()` 只保留「删除旧块」。
+> 结论是这个宿主上「网页服务器对局域网可达」与「桌面外壳能连上」互斥，远程访问请用已配置的
+> `@linxin666/dsh-remote-web-ui` 隧道。
 >
 > 然后编辑 `%USERPROFILE%\.dsh\profiles\desktop\package.json`：
 
@@ -138,7 +139,7 @@ tar -xzf "$env:USERPROFILE\.dsh\profiles\desktop\vendor\dsh-claude-glass-1.2.1.t
 {
   "dependencies": {
     // 原来是 dsh-client-ui-aqua，换成这一行
-    "dsh-claude-glass": "file:vendor\\dsh-claude-glass-1.2.1.tgz"
+    "dsh-claude-glass": "file:vendor\\dsh-claude-glass-1.2.2.tgz"
   },
   "dsh": {
     "profile": {

@@ -488,35 +488,38 @@ if (!existsSync(indexFile)) {
   } else {
     console.log("  ok   lan-access.js -> ./qr.js resolves inside lib/");
   }
-  // The managed row must never pin a wildcard bind. dsh-host-webserver
-  // 0.2.1-rc.2 refuses one ("binding every interface would expose remote code
-  // execution to the network"), and `webserver` is a REQUIRED plugin: a stale
-  // wildcard row does not break the LAN panel, it stops the whole Harness with
-  // "2 required plugins did not activate". Prose may name the wildcard, so
-  // check the code only.
+  // The managed row must never be written again. Two release-critical failures
+  // came from it: 1.1.0 pinned `0.0.0.0` (dsh-host-webserver 0.2.1-rc.2 refuses
+  // a wildcard bind, and `webserver` is a REQUIRED plugin, so the whole Harness
+  // stopped with "2 required plugins did not activate"), and 1.2.1 pinned the
+  // concrete LAN address (the desktop shell still connects to
+  // http://127.0.0.1:<port>, so the next start died with
+  // "[TypeError: fetch failed] ... ECONNREFUSED 127.0.0.1:<port>" and the app
+  // fell back to a minimal profile). 1.2.2 removes the writer entirely: enabling
+  // the switch must refuse, and only removal of a stale block may touch the
+  // profile. Prose may name the wildcard, so check the code only.
   const lanCode = lan.replace(/\/\*[\s\S]*?\*\//g, "");
   if (/0\.0\.0\.0/.test(lanCode)) {
     console.log("  BAD  lib/lan-access.js still writes a 0.0.0.0 bind — the host refuses it and the Harness will not start");
     guardFailures += 1;
-  } else if (!lanCode.includes("lanBindHost")) {
-    console.log("  BAD  lib/lan-access.js lost lanBindHost — the managed row has no concrete bind host");
+  } else if (!lanCode.includes("局域网绑定在当前 DSH 上不可用")) {
+    console.log("  BAD  lib/lan-access.js lost its LAN-bind refusal — the switch could edit the webserver row again");
+    guardFailures += 1;
+  } else if (lanCode.includes(`"    host: '`)) {
+    console.log("  BAD  lib/lan-access.js still emits a webserver host line — binding a LAN address breaks the next start");
     guardFailures += 1;
   } else {
-    console.log("  ok   lan-access pins a concrete LAN address (no wildcard bind)");
+    console.log("  ok   lan-access refuses to bind the LAN (only removal of a stale block remains)");
   }
-  // The row is YAML, and its quoting is load-bearing. `host: '<ip>'` is a
-  // scalar; `host: '<ip>',` is "bad indentation of a mapping entry" — and a
-  // malformed overlay stops the whole app from booting, before any plugin
-  // loads (this shipped once, in 1.2.0). So assert the emitted expression here,
-  // not only the generated rows the smoke test exercises.
-  if (lan.includes(`+ "',",`)) {
-    console.log("  BAD  the managed row's host line emits a trailing comma — the overlay parser rejects it");
-    guardFailures += 1;
-  } else if (!lan.includes(`"    host: '" + bindHost + "'"`)) {
-    console.log("  BAD  lib/lan-access.js lost the `host: '<bindHost>'` row (missing or reshaped)");
+  // The row is YAML, and a writer once shipped a trailing comma: "bad
+  // indentation of a mapping entry" stops the whole app from booting, before any
+  // plugin loads (1.2.0). No writer may come back, so assert the absence of any
+  // emitted host expression rather than its shape.
+  if (lan.includes(`+ "',",`) || lan.includes(`+ "'",`)) {
+    console.log("  BAD  lib/lan-access.js builds a YAML host line again");
     guardFailures += 1;
   } else {
-    console.log("  ok   the managed host row is emitted as a bare YAML scalar");
+    console.log("  ok   no webserver host line is emitted");
   }
 
   // The host plugin's identity and the client services its ported halves need.

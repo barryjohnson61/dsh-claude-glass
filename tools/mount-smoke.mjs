@@ -642,59 +642,45 @@ if (status0) {
   if (status0.body?.pendingBind !== null) fail("the status route reported a pending bind before anything was written");
 }
 
-const enabled = await call("/api/dsh-lan-access/bind", "", post({ enabled: true }));
-/* The managed row must pin a CONCRETE interface address: dsh-host-webserver
- * 0.2.1-rc.2 refuses a wildcard, and `webserver` is a required plugin, so a
- * wildcard there is a boot failure, not a broken switch. The address is the
- * stubbed machine's first LAN address, whatever the stub hands out. */
 const lanAddr = status0?.body?.addresses?.[0]?.address;
+if (typeof lanAddr !== "string") fail("the status route published no LAN address (the stub should hand one out)");
+
+/*
+ * glass 1.2.2: the switch must REFUSE. Two shipped releases broke startup from
+ * this row — 1.1.0 pinned the wildcard (dsh-host-webserver 0.2.1-rc.2 rejects
+ * it, and `webserver` is required, so nothing activates), 1.2.1 pinned the
+ * concrete LAN address (the desktop shell still dials http://127.0.0.1:<port>,
+ * so the next start dies with ECONNREFUSED and falls back to a minimal
+ * profile). So: enabling must answer 500 with the explanation, and the patch
+ * file must be byte-identical to before.
+ */
+const enabled = await call("/api/dsh-lan-access/bind", "", post({ enabled: true }));
 if (enabled) {
-  say(`  POST bind {enabled:true} -> ${enabled.status} pendingBind=${JSON.stringify(enabled.body?.pendingBind)} restartRequired=${enabled.body?.restartRequired}`);
-  if (typeof lanAddr !== "string") fail("the status route published no LAN address to bind");
-  if (enabled.body?.pendingBind !== lanAddr) fail(`turning the switch on pinned ${JSON.stringify(enabled.body?.pendingBind)}, expected the LAN address ${JSON.stringify(lanAddr)}`);
-  if (enabled.body?.pendingBind === "0.0.0.0") fail("turning the switch on pinned the wildcard 0.0.0.0 — the host refuses it and will not start");
-  if (enabled.body?.restartRequired !== true) fail("turning the switch on did not report that a restart is required");
+  say(`  POST bind {enabled:true} -> ${enabled.status} error=${JSON.stringify(enabled.body?.error)?.slice(0, 80)}`);
+  if (enabled.status !== 500) fail(`turning the switch on answered ${enabled.status}, expected 500 (the LAN bind is unsupported here)`);
+  if (!String(enabled.body?.error ?? "").includes("局域网绑定在当前 DSH 上不可用")) {
+    fail("turning the switch on did not explain that the LAN bind is unsupported");
+  }
+  if (enabled.body?.pendingBind !== undefined) fail("turning the switch on reported a pending bind — it must not write anything");
 }
 const written = existsSync(livePatch) ? readFileSync(livePatch, "utf8") : "";
-for (const needle of ["# >>> dsh-lan-access bind >>>", `host: '${lanAddr}'`, "port: 19387", "compression: gzip", SENTINEL.trim()]) {
-  if (!written.includes(needle)) fail(`the managed block is missing ${JSON.stringify(needle)}`);
+if (written.includes("# >>> dsh-lan-access bind >>>")) {
+  fail("turning the switch on wrote a managed webserver block — that row stops the next start (wildcard refused, or 127.0.0.1 unreachable)");
 }
-if (/host:\s*["']?0\.0\.0\.0/.test(written)) {
-  fail("the managed block still pins a wildcard bind — dsh-host-webserver 0.2.1-rc.2 refuses it and the Harness will not start");
-}
-/*
- * The block is YAML, not a text file: a stray comma (`host: '<ip>',`, which
- * shipped once) makes the overlay parser reject the whole profile with "bad
- * indentation of a mapping entry" and the app never starts. A substring check
- * cannot see that, so assert the row's SHAPE and that no line of the managed
- * block ends with a comma.
- */
-{
-  const start = written.indexOf("# >>> dsh-lan-access bind >>>");
-  const end = written.indexOf("# <<< dsh-lan-access bind <<<");
-  const block = start >= 0 && end > start ? written.slice(start, end) : "";
-  if (block === "") fail("the managed block has no opening/closing marker pair");
-  const badComma = block
-    .split(/\r?\n/)
-    .filter((l) => /\S.*,\s*$/.test(l) && !l.trimStart().startsWith("#"));
-  if (badComma.length > 0) fail(`the managed block emits comma-terminated YAML line(s): ${JSON.stringify(badComma[0])}`);
-  if (!new RegExp(`^    host: '${lanAddr.replace(/\./g, "\\.")}'$`, "m").test(block)) {
-    fail(`the managed block's host row is not a bare YAML scalar: expected "    host: '${lanAddr}'"`);
-  }
-  say("  block shape           -> bare YAML scalars, no comma-terminated line");
-}
+if (!written.includes(SENTINEL.trim())) fail("the refusing switch damaged unrelated content in the patch file");
+say("  profile               -> untouched by the switch (no managed block)");
 if (existsSync(fallbackPatch)) {
   fail(`the switch wrote ${fallbackPatch} — the environment fallback won over the Host's profileContext (that is the desktop-profile bug)`);
-} else {
-  say(`  wrote                 -> ${livePatch.replace(sandbox, "<sandbox>")}, and never profiles/web`);
 }
 
 const bad = await call("/api/dsh-lan-access/bind", "", post({ enabled: "yes" }));
 if (bad && bad.status !== 400) fail(`a non-boolean "enabled" was answered ${bad.status}, expected 400`);
 
 const status1 = await call("/api/dsh-lan-access/status");
-if (status1 && status1.body?.pendingBind !== lanAddr) fail(`the status route did not remember the pending bind (${JSON.stringify(status1.body?.pendingBind)} != ${JSON.stringify(lanAddr)})`);
+if (status1 && status1.body?.pendingBind !== null) fail(`the status route reported a pending bind after a refused switch (${JSON.stringify(status1.body?.pendingBind)})`);
 
+/* Turning the switch OFF is still allowed: that path only REMOVES a stale
+ * block, which is how a profile damaged by 1.1.0/1.2.x recovers. */
 const disabled = await call("/api/dsh-lan-access/bind", "", post({ enabled: false }));
 if (disabled) {
   say(`  POST bind {enabled:false}-> ${disabled.status} pendingBind=${JSON.stringify(disabled.body?.pendingBind)}`);

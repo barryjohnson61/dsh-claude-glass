@@ -471,6 +471,18 @@ const LAN_CLIENT_OFF_FIXED = `\t\t\t\tif (!loopback && !pendingLan) {`;
 const LAN_CLIENT_WARN_ANCHOR = `\t\t\t\tif (enabled || info.pendingBind === "0.0.0.0") {`;
 const LAN_CLIENT_WARN_FIXED = `\t\t\t\tif (enabled || pendingLan) {`;
 
+/* glass 1.2.2: the host half refuses to write the managed row (see
+ * LAN_BLOCK_WRITE_FIXED), so the switch cannot do anything. Disable it and put
+ * the reason where the panel used to promise a QR code. */
+const LAN_CLIENT_OFF_LABEL_ANCHOR = `\t\t\t\tbody.push(h("div", { className: "dla-label", key: "l1" }, "还没打开局域网访问"));`;
+const LAN_CLIENT_OFF_LABEL_FIXED = `\t\t\t\tbody.push(h("div", { className: "dla-label", key: "l1" }, "局域网访问（当前 DSH 不支持）"));`;
+
+const LAN_CLIENT_N2_ANCHOR = `\t\t\t\t\t\t"下面打开开关并重启 DSH，这里就会出现二维码。"),`;
+const LAN_CLIENT_N2_FIXED = `\t\t\t\t\t\t"宿主拒绝通配地址，绑定具体网卡又会让桌面外壳连不上 127.0.0.1、下次启动失败。" +\n\t\t\t\t\t\t"远程访问请用「远程网页」隧道。"),`;
+
+const LAN_CLIENT_DISABLED_ANCHOR = `\t\t\t\t\t\t\t\tdisabled: busy,`;
+const LAN_CLIENT_DISABLED_FIXED = `\t\t\t\t\t\t\t\tdisabled: true,`;
+
 const LAN_CLIENT_STATE_NOTE =
   `Rewritten: the panel decides "LAN on" by "the bind is not loopback" and\n` +
   `           "pending" by "a non-loopback address is recorded", instead of\n` +
@@ -500,6 +512,9 @@ function portLanAccessClient() {
     [LAN_CLIENT_PENDING_ANCHOR, LAN_CLIENT_PENDING_FIXED],
     [LAN_CLIENT_OFF_ANCHOR, LAN_CLIENT_OFF_FIXED],
     [LAN_CLIENT_WARN_ANCHOR, LAN_CLIENT_WARN_FIXED],
+    [LAN_CLIENT_OFF_LABEL_ANCHOR, LAN_CLIENT_OFF_LABEL_FIXED],
+    [LAN_CLIENT_N2_ANCHOR, LAN_CLIENT_N2_FIXED],
+    [LAN_CLIENT_DISABLED_ANCHOR, LAN_CLIENT_DISABLED_FIXED],
   ]) {
     if (require1(rewritten, anchor, label)) {
       rewritten = rewritten.replace(anchor, fixed.split("\n").join(eol));
@@ -507,6 +522,7 @@ function portLanAccessClient() {
   }
   requireAny(rewritten, "var pendingLan =", label);
   require1(rewritten, "var enabled = !loopback;", label);
+  require1(rewritten, LAN_CLIENT_DISABLED_FIXED, label);
 
   const out =
     HEADER(rel, text, `${REWRITE_NOTE}\n${LAN_CLIENT_PORTAL_NOTE}\n${LAN_CLIENT_STATE_NOTE}`) +
@@ -900,45 +916,60 @@ const LAN_HOST_DOC_FIXED = ` * @param allInterfaces - true to pin this machine's
 const LAN_WRITEBIND_ANCHOR = `export function writeBind(allInterfaces, port = DEFAULT_PORT) {`;
 
 const LAN_WRITEBIND_FIXED = `/**
- * glass: the interface address the managed row pins.
+ * glass 1.2.2: the managed webserver row is never written any more.
  *
  * dsh-host-webserver 0.2.1-rc.2 refuses a wildcard bind outright ("binding every
  * interface would expose remote code execution to the network"), and a refused
- * row makes a REQUIRED plugin fail to activate — the whole host then refuses to
- * start, not just this panel. Upstream pins \`0.0.0.0\` because it is the one
- * value reachable from every interface; a concrete LAN address keeps the
- * feature's promise for the phone on the same network without naming a
- * wildcard, so the managed row can never brick the next boot.
+ * row makes a REQUIRED plugin fail to activate -- the whole host refuses to
+ * start, not just this panel (that was 1.1.0). A concrete LAN address is
+ * accepted by the host, but the desktop shell still connects to
+ * http://127.0.0.1:<port>; binding the LAN address makes that connection fail on
+ * the NEXT start with "[TypeError: fetch failed] ... ECONNREFUSED
+ * 127.0.0.1:<port>" and the app falls back to a minimal profile (that was
+ * 1.2.1, and it is the loop this release ends).
  *
- * Throws when the machine has no LAN address: writing the block anyway would
- * claim LAN access is on while nothing is reachable.
+ * The two failures are halves of one incompatibility: on this runtime the web
+ * server cannot be reachable from the LAN without losing the shell. Remote
+ * access is the remote-web-ui tunnel. writeBind() therefore only ever REMOVES a
+ * stale block and refuses to create one.
  */
-function lanBindHost() {
-  const addresses = lanAddresses();
-  if (addresses.length === 0) {
-    throw new Error("no LAN address to bind: this machine has no non-internal IPv4 interface");
-  }
-  return addresses[0].address;
-}
+export function writeBind(allInterfaces, port = DEFAULT_PORT) {`;
 
-export function writeBind(allInterfaces, port = DEFAULT_PORT) {
-  /* glass: resolved before the block is built, so the managed row never
-   * carries a wildcard. */
-  const bindHost = allInterfaces ? lanBindHost() : "127.0.0.1";`;
+/* Upstream's block writer, byte for byte (the panel's switch path). Replaced by
+ * a refusal, so no code path can edit the `webserver` row any more. */
+const LAN_BLOCK_WRITE_ANCHOR = `  if (allInterfaces) {
+    const block = [
+      BLOCK_START,
+      "# Managed by dsh-lan-access. Removed when the switch is turned off.",
+      "#",
+      "# This row replaces the shipped \`webserver\` row, so every static field it",
+      "# sets has to be repeated here. Reaching this port from another device",
+      "# grants full control of this machine's agent: keep it on a network you",
+      "# trust, and do not share the pairing URL.",
+      "- id: webserver",
+      "  name: '@deepseek-ai/dsh-host-webserver'",
+      "  inject: [webStartup]",
+      "  config:",
+      "    host: '0.0.0.0'",
+      \`    port: \${port}\`,
+      "    compression: gzip",
+      "    compressionLevel: 1",
+      "    compressionThresholdBytes: 1024",
+      BLOCK_END,
+      "",
+    ].join("\\n");
+    text += (text.endsWith("\\n") || text === "" ? "" : "\\n") + block;
+  }`;
 
-const LAN_HOST_LINE_ANCHOR = `      "    host: '0.0.0.0'",`;
-/*
- * The needle above is a JS array ELEMENT: `"...0.0.0.0'"` is the string and the
- * final `,` belongs to the array. The replacement must therefore contribute the
- * quotes only — `"...'" + bindHost + "'"` — with the array comma left where the
- * anchor had it. Writing `"',"` instead puts a comma INTO the emitted YAML line
- * (`host: '192.168.137.1',`), which the overlay parser rejects with
- * "bad indentation of a mapping entry" and the whole app refuses to boot.
- */
-const LAN_HOST_LINE_FIXED = `      "    host: '" + bindHost + "'",`;
+const LAN_BLOCK_WRITE_FIXED = `  if (allInterfaces) {
+    throw new Error(
+      "局域网绑定在当前 DSH 上不可用：宿主拒绝通配地址，而桌面外壳只连 127.0.0.1，" +
+        "绑定具体网卡会让下次启动报 ECONNREFUSED 并退回最小 profile。远程访问请用「远程网页」隧道。",
+    );
+  }`;
 
 const LAN_RETURN_ANCHOR = `  return allInterfaces ? "0.0.0.0" : "127.0.0.1";`;
-const LAN_RETURN_FIXED = `  return allInterfaces ? bindHost : "127.0.0.1";`;
+const LAN_RETURN_FIXED = `  return "127.0.0.1";`;
 
 const LAN_REACHABLE_ANCHOR = `  const reachable = host === "0.0.0.0" && addresses.length > 0;`;
 const LAN_REACHABLE_FIXED = `  /* glass: the managed row pins a concrete interface address now, so loopback
@@ -947,10 +978,13 @@ const LAN_REACHABLE_FIXED = `  /* glass: the managed row pins a concrete interfa
     host !== "127.0.0.1" && host !== "localhost" && host !== "::1" && addresses.length > 0;`;
 
 const LAN_WILDCARD_NOTE =
-  `Rewritten: the managed row pins the machine's LAN address instead of\n` +
-  `           \`0.0.0.0\`. dsh-host-webserver 0.2.1-rc.2 refuses a wildcard bind\n` +
-  `           and \`webserver\` is a required plugin, so a stale wildcard row stops\n` +
-  `           the whole Harness from starting (not just this panel).`;
+  `Rewritten: \`writeBind()\` no longer edits the \`webserver\` row at all.\n` +
+  `           dsh-host-webserver 0.2.1-rc.2 refuses a wildcard bind (that is a\n` +
+  `           1.1.0 boot failure, since \`webserver\` is required), and binding a\n` +
+  `           concrete LAN address breaks the desktop shell's own\n` +
+  `           http://127.0.0.1:<port> connection on the next start (that is the\n` +
+  `           1.2.1 ECONNREFUSED failure). The switch now refuses and points at\n` +
+  `           the remote-web-ui tunnel; only removal of a stale block remains.`;
 
 const LAN_PATCH_NOTE =
   `Rewritten: the managed patch file is taken from the Host's \`profileContext\`\n` +
@@ -992,8 +1026,9 @@ function portLanAccessHost() {
   if (require1(out, LAN_WRITEBIND_ANCHOR, label)) {
     out = out.replace(LAN_WRITEBIND_ANCHOR, LAN_WRITEBIND_FIXED.split("\n").join(eol));
   }
-  if (require1(out, LAN_HOST_LINE_ANCHOR, label)) {
-    out = out.replace(LAN_HOST_LINE_ANCHOR, LAN_HOST_LINE_FIXED);
+  const blockAnchor = LAN_BLOCK_WRITE_ANCHOR.split("\n").join(eol);
+  if (require1(out, blockAnchor, label)) {
+    out = out.replace(blockAnchor, LAN_BLOCK_WRITE_FIXED.split("\n").join(eol));
   }
   if (require1(out, LAN_RETURN_ANCHOR, label)) {
     out = out.replace(LAN_RETURN_ANCHOR, LAN_RETURN_FIXED);
@@ -1001,19 +1036,16 @@ function portLanAccessHost() {
   if (require1(out, LAN_REACHABLE_ANCHOR, label)) {
     out = out.replace(LAN_REACHABLE_ANCHOR, LAN_REACHABLE_FIXED.split("\n").join(eol));
   }
-  requireAny(out, "lanBindHost()", label);
   /* The wildcard must be gone from the code; the prose that explains WHY may
    * still mention it, so check the value form only. */
   if (/\b0\.0\.0\.0\b/.test(out.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\//g, ""))) {
     problems.push(`${label}: a wildcard bind is still written outside the comments`);
   }
-  /* The emitted row is YAML, so its quoting is load-bearing: `host: '<ip>'` is a
-   * scalar, `host: '<ip>',` is a syntax error that stops the whole app from
-   * booting (see LAN_HOST_LINE_FIXED). Assert both shapes here, where the
-   * generator can still refuse to write, and not only in the smoke test. */
-  require1(out, LAN_HOST_LINE_FIXED, label);
-  if (out.includes(`+ "',",`)) {
-    problems.push(`${label}: the managed row's host line emits a trailing comma — invalid YAML`);
+  /* No code path may emit a `webserver` row any more: the refusal has to be
+   * present, and nothing in the file may build a host line. */
+  require1(out, LAN_BLOCK_WRITE_FIXED.split("\n").join(eol), label);
+  if (out.includes(`"    host: '`)) {
+    problems.push(`${label}: a webserver host row is still emitted — writeBind() must never write one`);
   }
 
   const file = "lan-access.js";

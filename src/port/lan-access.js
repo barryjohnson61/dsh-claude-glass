@@ -11,10 +11,13 @@
  * `profiles/web` on the DSH desktop client, which boots the `desktop`
  * profile without exporting that variable; the switch then reported ENOENT
  * and the running host never read the block.
- * Rewritten: the managed row pins the machine's LAN address instead of
- *            `0.0.0.0`. dsh-host-webserver 0.2.1-rc.2 refuses a wildcard bind
- *            and `webserver` is a required plugin, so a stale wildcard row stops
- *            the whole Harness from starting (not just this panel).
+ * Rewritten: `writeBind()` no longer edits the `webserver` row at all.
+ *            dsh-host-webserver 0.2.1-rc.2 refuses a wildcard bind (that is a
+ *            1.1.0 boot failure, since `webserver` is required), and binding a
+ *            concrete LAN address breaks the desktop shell's own
+ *            http://127.0.0.1:<port> connection on the next start (that is the
+ *            1.2.1 ECONNREFUSED failure). The switch now refuses and points at
+ *            the remote-web-ui tunnel; only removal of a stale block remains.
  */
 
 /**
@@ -242,31 +245,24 @@ export function readBindIntent() {
  * @returns the host that will apply after the next start.
  */
 /**
- * glass: the interface address the managed row pins.
+ * glass 1.2.2: the managed webserver row is never written any more.
  *
  * dsh-host-webserver 0.2.1-rc.2 refuses a wildcard bind outright ("binding every
  * interface would expose remote code execution to the network"), and a refused
- * row makes a REQUIRED plugin fail to activate — the whole host then refuses to
- * start, not just this panel. Upstream pins `0.0.0.0` because it is the one
- * value reachable from every interface; a concrete LAN address keeps the
- * feature's promise for the phone on the same network without naming a
- * wildcard, so the managed row can never brick the next boot.
+ * row makes a REQUIRED plugin fail to activate -- the whole host refuses to
+ * start, not just this panel (that was 1.1.0). A concrete LAN address is
+ * accepted by the host, but the desktop shell still connects to
+ * http://127.0.0.1:<port>; binding the LAN address makes that connection fail on
+ * the NEXT start with "[TypeError: fetch failed] ... ECONNREFUSED
+ * 127.0.0.1:<port>" and the app falls back to a minimal profile (that was
+ * 1.2.1, and it is the loop this release ends).
  *
- * Throws when the machine has no LAN address: writing the block anyway would
- * claim LAN access is on while nothing is reachable.
+ * The two failures are halves of one incompatibility: on this runtime the web
+ * server cannot be reachable from the LAN without losing the shell. Remote
+ * access is the remote-web-ui tunnel. writeBind() therefore only ever REMOVES a
+ * stale block and refuses to create one.
  */
-function lanBindHost() {
-  const addresses = lanAddresses();
-  if (addresses.length === 0) {
-    throw new Error("no LAN address to bind: this machine has no non-internal IPv4 interface");
-  }
-  return addresses[0].address;
-}
-
 export function writeBind(allInterfaces, port = DEFAULT_PORT) {
-  /* glass: resolved before the block is built, so the managed row never
-   * carries a wildcard. */
-  const bindHost = allInterfaces ? lanBindHost() : "127.0.0.1";
   const file = patchFile();
   let text = "";
   try {
@@ -282,27 +278,10 @@ export function writeBind(allInterfaces, port = DEFAULT_PORT) {
   text = text.replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "\n");
 
   if (allInterfaces) {
-    const block = [
-      BLOCK_START,
-      "# Managed by dsh-lan-access. Removed when the switch is turned off.",
-      "#",
-      "# This row replaces the shipped `webserver` row, so every static field it",
-      "# sets has to be repeated here. Reaching this port from another device",
-      "# grants full control of this machine's agent: keep it on a network you",
-      "# trust, and do not share the pairing URL.",
-      "- id: webserver",
-      "  name: '@deepseek-ai/dsh-host-webserver'",
-      "  inject: [webStartup]",
-      "  config:",
-      "    host: '" + bindHost + "'",
-      `    port: ${port}`,
-      "    compression: gzip",
-      "    compressionLevel: 1",
-      "    compressionThresholdBytes: 1024",
-      BLOCK_END,
-      "",
-    ].join("\n");
-    text += (text.endsWith("\n") || text === "" ? "" : "\n") + block;
+    throw new Error(
+      "局域网绑定在当前 DSH 上不可用：宿主拒绝通配地址，而桌面外壳只连 127.0.0.1，" +
+        "绑定具体网卡会让下次启动报 ECONNREFUSED 并退回最小 profile。远程访问请用「远程网页」隧道。",
+    );
   }
 
   try {
@@ -310,7 +289,7 @@ export function writeBind(allInterfaces, port = DEFAULT_PORT) {
   } catch (error) {
     throw new Error(`could not write ${file}: ${error.message}`);
   }
-  return allInterfaces ? bindHost : "127.0.0.1";
+  return "127.0.0.1";
 }
 
 function json(body, status = 200) {
